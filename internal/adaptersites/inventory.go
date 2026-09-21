@@ -143,28 +143,28 @@ var canaryMarkers = []string{
 // for reviewability.
 func Sites() []Site {
 	return []Site{
-		// --- cmd/sentinel -------------------------------------------------
-		{Path: "cmd/sentinel/authorship.go", Symbol: "observedAgent.RunPrompt/RunReview", Anchor: "output, err := a.AgentReviewer.RunPrompt(prompt)", Marker: "RunPrompt(",
+		// --- cmd/vcsentinel -----------------------------------------------
+		{Path: "cmd/vcsentinel/authorship.go", Symbol: "observedAgent.RunPrompt/RunReview", Anchor: "output, err := a.AgentReviewer.RunPrompt(prompt)", Marker: "RunPrompt(",
 			Class: ClassShared, Reason: "Observer decorator over the configured auditor: it delegates to the wrapped adapter after recording the effective agent. Used identically by the admitted transport path and the gated legacy path; spawns nothing itself."},
-		{Path: "cmd/sentinel/status_command.go", Symbol: "runInShell", Anchor: "cmd = exec.Command(\"cmd\", \"/C\", command)", Marker: "exec.Command",
+		{Path: "cmd/vcsentinel/status_command.go", Symbol: "runInShell", Anchor: "cmd = exec.Command(\"cmd\", \"/C\", command)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Deterministic shell runner for configured lint/test/build commands; never consults an agent."},
-		{Path: "cmd/sentinel/doctor_command.go", Symbol: "productionDoctorEnv probe", Anchor: "answer, err := ad.RunPrompt(prompt)", Marker: "RunPrompt(",
+		{Path: "cmd/vcsentinel/doctor_command.go", Symbol: "productionDoctorEnv probe", Anchor: "answer, err := ad.RunPrompt(prompt)", Marker: "RunPrompt(",
 			Class: ClassHelper, Reason: "Human-invoked advisory preflight probe: one fixed one-word prompt per configured agent with a 60s budget, over-budget calls reported as timeouts. The answer renders WARN/ok rows in an exit-0 report and never feeds a review verdict or gate outcome."},
-		{Path: "cmd/sentinel/explain_command.go", Symbol: "explain range plumbing", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
+		{Path: "cmd/vcsentinel/explain_command.go", Symbol: "explain range plumbing", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the change-profile explainer."},
-		{Path: "cmd/sentinel/pr_command.go", Symbol: "pr/clipboard helpers", Anchor: "cmd := exec.Command(\"gh\", args...)", Marker: "exec.Command",
+		{Path: "cmd/vcsentinel/pr_command.go", Symbol: "pr/clipboard helpers", Anchor: "cmd := exec.Command(\"gh\", args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "gh pr create publication, git config reads, and clipboard helpers; no provider agent. The legacy 'sentinel pr' gh passthrough was retired (T8.4), removing its former spawn site."},
-		{Path: "cmd/sentinel/runs_command_actions.go", Symbol: "runs start/respond/abort/retry/recover via RepositoryHost", Anchor: "", Marker: "",
+		{Path: "cmd/vcsentinel/runs_command_actions.go", Symbol: "runs start/respond/abort/retry/recover via RepositoryHost", Anchor: "", Marker: "",
 			Class: ClassDurable, Reason: "Operator control actions apply exclusively through execution.RepositoryHost/controller APIs over the common-dir store; the admission request construction itself moved to execution.ResolveAdmissionRequest (internal/execution/host.go), so this file no longer matches any canary token and is documented as a path-decision row."},
-		{Path: "cmd/sentinel/runs_command.go", Symbol: "promptRunAdapter/buildRunsController", Anchor: "return execution.NewController(backing, promptAdapter), nil", Marker: "NewController(",
+		{Path: "cmd/vcsentinel/runs_command.go", Symbol: "promptRunAdapter/buildRunsController", Anchor: "return execution.NewController(backing, promptAdapter), nil", Marker: "NewController(",
 			Class: ClassDurable, Reason: "`sentinel runs` operator prompts execute ONLY inside the controller flow: buildRunsController hands promptRunAdapter to execution.NewController, so every Execute receives the admitted InvocationEnvelope. This closes the parallel path R7 slice 2 left out of scope."},
-		{Path: "cmd/sentinel/tui_command.go", Symbol: "spawnDetachedTuiDaemon", Anchor: "cmd := exec.Command(exe, \"runs\", \"daemon\", \"start\")", Marker: "exec.Command",
+		{Path: "cmd/vcsentinel/tui_command.go", Symbol: "spawnDetachedTuiDaemon", Anchor: "cmd := exec.Command(exe, \"runs\", \"daemon\", \"start\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Control-center daemon lifecycle (slice 9): spawns THIS binary as `runs daemon start` detached for the current repository; the child admits runs through the same durable controller path as every other daemon start. Never spawns a provider agent directly."},
-		{Path: "cmd/sentinel/staged_check.go", Symbol: "staged volume plumbing", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
+		{Path: "cmd/vcsentinel/staged_check.go", Symbol: "staged volume plumbing", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Git plumbing for the staged-commit volume measurement."},
-		{Path: "cmd/sentinel/main.go", Symbol: "chooseAdapterAndGenerateMessages -> git.GenerateBatchMessages", Anchor: "", Marker: "",
+		{Path: "cmd/vcsentinel/main.go", Symbol: "chooseAdapterAndGenerateMessages -> git.GenerateBatchMessages", Anchor: "", Marker: "",
 			Class: ClassHelper, Reason: "Commit-message generation asks the agent for batch message TEXT consumed by the interactive slice flow. It produces no verdict and cannot flip any gate outcome; adapter unavailability degrades to deterministic fallback messages."},
-		{Path: "cmd/sentinel/review_transport.go", Symbol: "nuevoDurableReviewTransport/applyDurableCutover", Anchor: "", Marker: "",
+		{Path: "cmd/vcsentinel/review_transport.go", Symbol: "nuevoDurableReviewTransport/applyDurableCutover", Anchor: "", Marker: "",
 			Class: ClassDurable, Reason: "Sole production construction site of the review DurableTransport and the gate durable wiring; since ticket 13 (R11) both are unconditional — a missing git common dir fails honestly instead of degrading to a removed legacy path."},
 
 		// --- internal/acpadapter (ACP/acpx production adapter, ticket 16) ---

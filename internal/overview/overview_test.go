@@ -381,7 +381,7 @@ func TestCollectStoresSuccessfulRunRowsBesideOriginalError(t *testing.T) {
 
 // TestIsInternalWorktreeRule pins the slice-13 plumbing rule on the
 // helper: a worktree is internal when it equals or nests under
-// <commonDir>/vas-sentinel/snapshots, with trailing slashes accepted and no
+// <commonDir>/vcsentinel/snapshots, with trailing slashes accepted and no
 // prefix-boundary false positives.
 func TestIsInternalWorktreeRule(t *testing.T) {
 	tests := []struct {
@@ -390,14 +390,14 @@ func TestIsInternalWorktreeRule(t *testing.T) {
 		commonDir  string
 		isInternal bool
 	}{
-		{"exact snapshots base", "/repo/.git/vas-sentinel/snapshots", "/repo/.git", true},
-		{"direct child", "/repo/.git/vas-sentinel/snapshots/abc123", "/repo/.git", true},
-		{"deeply nested subpath", "/repo/.git/vas-sentinel/snapshots/abc/sub/x", "/repo/.git", true},
-		{"sibling area under vas-sentinel", "/repo/.git/vas-sentinel/store", "/repo/.git", false},
-		{"prefix without boundary", "/repo/.git/vas-sentinel/snapshots-extra/x", "/repo/.git", false},
-		{"outside the common dir", "/elsewhere/vas-sentinel/snapshots/abc", "/repo/.git", false},
-		{"trailing slash on the common dir", "/repo/.git/vas-sentinel/snapshots/abc/", "/repo/.git/", true},
-		{"trailing slash on the worktree path", "/repo/.git/vas-sentinel/snapshots/abc/", "/repo/.git", true},
+		{"exact snapshots base", "/repo/.git/vcsentinel/snapshots", "/repo/.git", true},
+		{"direct child", "/repo/.git/vcsentinel/snapshots/abc123", "/repo/.git", true},
+		{"deeply nested subpath", "/repo/.git/vcsentinel/snapshots/abc/sub/x", "/repo/.git", true},
+		{"sibling area under vcsentinel", "/repo/.git/vcsentinel/store", "/repo/.git", false},
+		{"prefix without boundary", "/repo/.git/vcsentinel/snapshots-extra/x", "/repo/.git", false},
+		{"outside the common dir", "/elsewhere/vcsentinel/snapshots/abc", "/repo/.git", false},
+		{"trailing slash on the common dir", "/repo/.git/vcsentinel/snapshots/abc/", "/repo/.git/", true},
+		{"trailing slash on the worktree path", "/repo/.git/vcsentinel/snapshots/abc/", "/repo/.git", true},
 		{"empty worktree path", "", "/repo/.git", false},
 	}
 	for _, tt := range tests {
@@ -423,7 +423,7 @@ func TestCollectFiltersInternalSnapshotWorktrees(t *testing.T) {
 	runGit(t, repo, "worktree", "add", feature, "-b", "feature")
 	writeFile(t, filepath.Join(feature, "dirty.txt"), "pending change\n")
 
-	snapshotsArea := filepath.Join(common, "vas-sentinel", "snapshots")
+	snapshotsArea := filepath.Join(common, "vcsentinel", "snapshots")
 	if err := os.MkdirAll(snapshotsArea, 0755); err != nil {
 		t.Fatal(err)
 	}

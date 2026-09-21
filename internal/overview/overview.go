@@ -18,7 +18,7 @@ import (
 
 // isInternalWorktree applies host-normalized paths to the snapshot area rule.
 func isInternalWorktree(worktreePath, commonDir string) bool {
-	base := filepath.ToSlash(filepath.Clean(filepath.Join(commonDir, "vas-sentinel", "snapshots")))
+	base := filepath.ToSlash(filepath.Clean(filepath.Join(commonDir, "vcsentinel", "snapshots")))
 	path := filepath.ToSlash(filepath.Clean(worktreePath))
 	isWithin := func(candidate, root string) bool {
 		if candidate == root {

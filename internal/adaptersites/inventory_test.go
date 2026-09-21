@@ -216,7 +216,7 @@ func TestInScopeAdapterSitesCarryAdmittedEnvelope(t *testing.T) {
 		t.Errorf("ReviewAdapter.Execute must receive the admitted InvocationEnvelope in its dispatch signature")
 	}
 
-	runsCLI := readFile(t, root, "cmd/sentinel/runs_command.go")
+	runsCLI := readFile(t, root, "cmd/vcsentinel/runs_command.go")
 	promptBody := functionBody(t, runsCLI, "(a promptRunAdapter) Execute(")
 	if !strings.Contains(promptBody, "InvocationEnvelope") {
 		t.Errorf("promptRunAdapter.Execute must receive the admitted InvocationEnvelope in its dispatch signature")

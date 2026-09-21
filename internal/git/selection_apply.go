@@ -360,7 +360,7 @@ func withSelectionIndex(head string, action func(string) error) error {
 }
 
 func newSelectionIndex() (string, error) {
-	file, err := os.CreateTemp("", "vas-sentinel-selection-index-")
+	file, err := os.CreateTemp("", "vcsentinel-selection-index-")
 	if err != nil {
 		return "", fmt.Errorf("could not create temporary Git index: %w", err)
 	}
