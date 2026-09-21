@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/git"
 )
 
 // TestStoreAtomicWrite reproduces TestLedgerEscrituraAtomica (T2.x) over
