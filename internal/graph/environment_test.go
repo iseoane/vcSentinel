@@ -21,7 +21,7 @@ func writeExecutableFixture(t *testing.T, dir, name, content string) string {
 func TestEnvironmentCodeGraphIncludesShebangInterpreterDir(t *testing.T) {
 	toolDir := t.TempDir()
 	interpDir := t.TempDir()
-	interp := "vas-sentinel-test-interp"
+	interp := "vcsentinel-test-interp"
 	writeExecutableFixture(t, interpDir, interp, "#!/bin/sh\necho interp-output\n")
 	tool := writeExecutableFixture(t, toolDir, "tool", "#!/usr/bin/env "+interp+"\necho tool-output\n")
 
@@ -62,7 +62,7 @@ func TestShebangToolRunsWithSanitizedEnv(t *testing.T) {
 	}
 	toolDir := t.TempDir()
 	interpDir := t.TempDir()
-	interp := "vas-sentinel-test-interp"
+	interp := "vcsentinel-test-interp"
 	writeExecutableFixture(t, interpDir, interp, "#!/bin/sh\necho interp-output\n")
 	tool := writeExecutableFixture(t, toolDir, "tool", "#!/usr/bin/env "+interp+"\necho tool-output\n")
 
