@@ -221,7 +221,7 @@ func TestNativeProviderRecoversFromUntrustedCache(t *testing.T) {
 	if result, _ := NewNativeProvider(dir, oid).Analyze([]string{"main.go"}); !result.Complete() {
 		t.Fatal(result.ReasonIncomplete())
 	}
-	path := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
+	path := filepath.Join(dir, ".git", "vcsentinel", "graph", oid+".json")
 	valid, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +285,7 @@ func TestNativeProviderPersistsOnlyAfterVerification(t *testing.T) {
 		return verifyGitSnapshot(r)
 	}
 	result, _ := p.Analyze([]string{"main.go"})
-	path := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
+	path := filepath.Join(dir, ".git", "vcsentinel", "graph", oid+".json")
 	if result.Complete() || !errors.Is(func() error { _, err := os.Stat(path); return err }(), os.ErrNotExist) {
 		t.Fatalf("result=%q persisted cache=%v", result.ReasonIncomplete(), path)
 	}
@@ -329,7 +329,7 @@ func TestNativeProviderConcurrentCacheIsSafe(t *testing.T) {
 	if !result.Complete() {
 		t.Fatal(result.ReasonIncomplete())
 	}
-	path := filepath.Join(dir, ".git", "vas-sentinel", "graph", oid+".json")
+	path := filepath.Join(dir, ".git", "vcsentinel", "graph", oid+".json")
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("cache entry not regular: %v %v", info, err)

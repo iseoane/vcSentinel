@@ -105,11 +105,11 @@ func cacheRoot(dir string) (*os.Root, error) {
 		return nil, err
 	}
 	defer root.Close()
-	path := filepath.Join("vas-sentinel", "graph")
+	path := filepath.Join("vcsentinel", "graph")
 	if err := root.MkdirAll(path, 0700); err != nil {
 		return nil, err
 	}
-	app, appErr := root.Lstat("vas-sentinel")
+	app, appErr := root.Lstat("vcsentinel")
 	info, infoErr := root.Lstat(path)
 	if appErr != nil || infoErr != nil || app.Mode()&os.ModeSymlink != 0 || !app.IsDir() || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0700 {
 		return nil, fmt.Errorf("unsafe cache directory")

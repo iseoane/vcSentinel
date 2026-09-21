@@ -29,7 +29,7 @@ func TestSaveCachePurgesExpiredEntries(t *testing.T) {
 	}
 	root.Close()
 
-	base := filepath.Join(dir, ".git", "vas-sentinel", "graph")
+	base := filepath.Join(dir, ".git", "vcsentinel", "graph")
 	// Purging only removes <oid>.json files with a valid OID, so the fixture
 	// uses the real shape.
 	expired := filepath.Join(base, "0123456789abcdef0123456789abcdef01234567.json")
