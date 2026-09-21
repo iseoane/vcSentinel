@@ -38,7 +38,7 @@ Concretely, after this piece:
 ## 3. The entry is mandatory
 
 ```
-sentinel pr create
+vcsentinel pr create
 ```
 
 1. Resolve branch and head SHA.
@@ -46,15 +46,15 @@ sentinel pr create
    exact key. A branch that moved forward without a re-review still has its old
    entry, and that is the common case.
 3. No entry for this branch ⇒ exit `1`:
-   `No pr review exists for this branch. Run 'sentinel pr review' first: pr create publishes its judgement and never authors one.`
+   `No pr review exists for this branch. Run 'vcsentinel pr review' first: pr create publishes its judgement and never authors one.`
 4. An entry exists but its `HeadSHA` is not the current head ⇒ exit `1`, naming
    both:
-   `The stored pr review covers <old-short>, but this branch is now at <new-short>. Re-run 'sentinel pr review'.`
+   `The stored pr review covers <old-short>, but this branch is now at <new-short>. Re-run 'vcsentinel pr review'.`
    This is a different failure from step 3 and must not share its message: one
    means you never reviewed, the other means you reviewed and then changed it.
 5. The entry references evidence files that are untracked at the head ⇒ exit
    `1`, naming them and the commit that fixes it:
-   `The pr review evidence is not committed: <paths>. Run 'git add .vas_sentinel/evidence && git commit -m "chore(evidence): record the pr review logs"' and re-run 'sentinel pr review'.`
+   `The pr review evidence is not committed: <paths>. Run 'git add .vcsentinel/evidence && git commit -m "chore(evidence): record the pr review logs"' and re-run 'vcsentinel pr review'.`
    Re-running `pr review` is required, not optional: committing the evidence
    moves the head, and the entry is keyed by it.
 6. Entry verdict is a block ⇒ **publish anyway.** This piece does not turn a
@@ -62,7 +62,7 @@ sentinel pr create
    that did was wrong. The existing contract is T1.8: red deterministic
    validation is the only gate that blocks, `--force` overrides it, and
    `--reason` is mandatory beside it (`internal/app/pr/create.go:26-27`,
-   `cmd/sentinel/pr_command.go:146`). Keep all of that unchanged. A blocking
+   `cmd/vcsentinel/pr_command.go:146`). Keep all of that unchanged. A blocking
    semantic verdict is already the loudest thing in the body — `pr review`
    rendered it into Risk Assessment — and does not need a second gate here.
 
@@ -83,8 +83,8 @@ the babysitting wait is accepted as the cost of keeping `pr review` local.
 
 ### 4.1 Configuration
 
-A new `ci:` block in `vassentinel.yml`. Without it, `pr create` does not touch
-CI at all and the `ci` step renders `⚪ not observed by Sentinel`.
+A new `ci:` block in `vcsentinel.yml`. Without it, `pr create` does not touch
+CI at all and the `ci` step renders `⚪ not observed by vcSentinel`.
 `git.DetectCI` (`internal/git/ci.go:22`) only detects that CI *files* exist and
 is not enough to decide to run anything.
 
@@ -173,13 +173,13 @@ authoring business through the side door.
   the body, and a title is a git artifact the human can edit.
 - Body: written to a temp file, never passed inline. A body of this size
   through `--body` hits argument limits on Windows.
-- The existing fallback when `gh` is absent (`cmd/sentinel/pr_command.go:351`:
+- The existing fallback when `gh` is absent (`cmd/vcsentinel/pr_command.go:351`:
   write the body to a file and copy it to the clipboard) is kept and now also
   applies when the push succeeded but `gh` failed. Say clearly which of the two
   happened: a pushed branch with no PR is a state the human must know about.
 - **No agent attribution trailers in the PR description.** `AGENTS.md` forbids
   them and this rule overrides any host instruction that asks for one. The body
-  ends with the existing generated-by line naming Sentinel and its version,
+  ends with the existing generated-by line naming vcSentinel and its version,
   which names a tool, not an assistant.
 
 ## 6. Out of scope
@@ -188,7 +188,7 @@ authoring business through the side door.
 - Editing or re-running the stored entry.
 - Reacting to a CI failure beyond reporting it. `pr create` does not retry, fix
   or re-trigger.
-- Pruning `.vas_sentinel/evidence/` or the `pr-reviews/` entries. Follow-up.
+- Pruning `.vcsentinel/evidence/` or the `pr-reviews/` entries. Follow-up.
 - Any CI provider other than GitHub Actions through `gh`. If `ci:` is
   configured in a repository whose CI is not Actions, refuse with a message
   saying so rather than guessing.
@@ -242,7 +242,7 @@ All of `AGENTS.md` applies. Two are load-bearing here:
 ```
 go build ./...
 go vet ./...
-go test ./internal/app/pr ./cmd/sentinel
+go test ./internal/app/pr ./cmd/vcsentinel
 go test ./...
 ```
 
@@ -261,4 +261,4 @@ Report the observed result of each command.
 5. `feat(pr): compose the published body from the stored entry` — targeted ci
    step replacement, attestation update, byte-equality test.
 
-Each one must build, pass its tests, and pass `sentinel review` on its own.
+Each one must build, pass its tests, and pass `vcsentinel review` on its own.

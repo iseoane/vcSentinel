@@ -15,7 +15,7 @@ publishes the stored title and body.
 
 Before this design, four commands ran a semantic audit and three asked
 overlapping questions about the same code. `gate` audited `HEAD` and discarded
-the result. `sentinel review` audited a commit and recorded it. `pr review`
+the result. `vcsentinel review` audited a commit and recorded it. `pr review`
 audited the net diff. `pr create` audited the net diff again on every invocation
 and derived its published notice from per-commit records. Nothing related any of
 it, so the work was paid for repeatedly and the conclusions did not compose.
@@ -235,10 +235,10 @@ Piece 3 is done. What the list above left open, and what was chosen:
 - **`--timeout` is refused**, not accepted and ignored. It only ever widened
   the semantic review budget. A flag that is silently a no-op tells a script
   its request was honoured when it was not; the refusal names
-  `sentinel review --timeout` as the place the budget still exists.
+  `vcsentinel review --timeout` as the place the budget still exists.
 - **A guarantee moved rather than disappeared:** the gate no longer fails
   closed on a corrupt human-disposition log, because it no longer reads one.
-  `sentinel review` does, and already pins that behaviour in its own test.
+  `vcsentinel review` does, and already pins that behaviour in its own test.
 
 ## Piece 4 — `pr review` judges the whole, against the intent
 

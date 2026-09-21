@@ -16,7 +16,7 @@ document wins: item 12 left three questions open and this plan answers them.
 
 ## 1. What this piece delivers
 
-`sentinel slice` records, on every commit it creates, one line stating what
+`vcsentinel slice` records, on every commit it creates, one line stating what
 the work was for, together with the provenance of that line. Piece 4 (`pr
 review`, item 10) now consumes the recorded range intent; that consumption was
 out of scope for this piece.
@@ -37,8 +37,8 @@ The intent is stored as trailers in the commit message itself.
 ```
 feat(review): make the coverage contract explicit
 
-Sentinel-Intent: stop the gate and review from both claiming per-commit authority
-Sentinel-Intent-Source: conversation
+vcSentinel-Intent: stop the gate and review from both claiming per-commit authority
+vcSentinel-Intent-Source: conversation
 ```
 
 Rationale, and the reason no other option qualifies: the requirement is that
@@ -57,13 +57,13 @@ it.
 
 This is not agent attribution. The `AGENTS.md` prohibition covers trailers
 that name an assistant as author (`Co-Authored-By`, `Claude-Session`,
-generated-with footers). `Sentinel-Intent` names no agent and claims no
+generated-with footers). `vcSentinel-Intent` names no agent and claims no
 authorship. Do not add any trailer beyond the two specified here.
 
 ### 2.2 Commits made without `slice` carry no intent, and that is accepted
 
 Do not build an after-the-fact annotation command in this piece. A commit
-with no `Sentinel-Intent` trailer is a commit whose intent is unknown, and
+with no `vcSentinel-Intent` trailer is a commit whose intent is unknown, and
 the consumer in piece 4 must be able to say "unknown" rather than guess. The
 reader API specified in section 4.3 must therefore distinguish three states,
 not two: declared, derived, absent.
@@ -86,7 +86,7 @@ Two source values exist, and only two:
 
 Rules that must hold in the code, not only in the docs:
 
-- The writer never upgrades a value. No code path in `sentinel` turns
+- The writer never upgrades a value. No code path in `vcsentinel` turns
   `conversation` into `declared`: the summariser stamps `conversation` and
   nothing rewrites it afterwards.
 - The reader takes the LAST occurrence of each trailer (see `Parse`, section
@@ -100,11 +100,11 @@ Rules that must hold in the code, not only in the docs:
   empty intent, and never write a source without an intent.
 - The two flags are mutually exclusive. Passing both is a usage error, exit
   `1`, with a message that says which one to keep.
-- `Sentinel-Intent-Source` is only ever one of the two literals above.
+- `vcSentinel-Intent-Source` is only ever one of the two literals above.
   Reading a commit that carries any other value must be treated as absent,
   not as a third kind.
 
-Sentinel must never claim it read a conversation. It cannot see the host
+vcSentinel must never claim it read a conversation. It cannot see the host
 transcript. It summarises a file the operator hands it, and that is exactly
 what `conversation` asserts.
 
@@ -121,8 +121,8 @@ package intent
 
 // Trailer keys. These strings appear nowhere else in the repository.
 const (
-    TrailerKey       = "Sentinel-Intent"
-    TrailerSourceKey = "Sentinel-Intent-Source"
+    TrailerKey       = "vcSentinel-Intent"
+    TrailerSourceKey = "vcSentinel-Intent-Source"
 )
 
 // Source is the provenance of one intent line. It is never upgraded:
@@ -141,7 +141,7 @@ const MaxLength = 300
 
 // Intent is one captured statement of what a piece of work was for.
 // The zero value means "no intent recorded", which is a legitimate state
-// for any commit not created by `sentinel slice`.
+// for any commit not created by `vcsentinel slice`.
 type Intent struct {
     Text   string
     Source Source
@@ -151,7 +151,7 @@ func (i Intent) IsZero() bool
 
 // Normalize collapses the text to a single trailer-safe line: it flattens
 // every newline and tab to a single space, collapses runs of whitespace,
-// trims, strips a leading "Sentinel-Intent:" the model may have echoed, and
+// trims, strips a leading "vcSentinel-Intent:" the model may have echoed, and
 // truncates to MaxLength on a rune boundary. It returns an error when the
 // result is empty or when source is not one of the two known values.
 func Normalize(text string, source Source) (Intent, error)
@@ -182,7 +182,7 @@ Rejection rules `Normalize` must enforce, each with its own test:
 `Parse` must not use a regexp over the whole message. Scan the trailer block
 line by line from the end of the message and stop at the first blank line
 that precedes a non-trailer line, so a body paragraph that happens to start
-with `Sentinel-Intent:` is not mistaken for a trailer.
+with `vcSentinel-Intent:` is not mistaken for a trailer.
 
 ### 4.2 Summarisation: `internal/intent/summarize.go`
 
@@ -229,11 +229,11 @@ intent is acceptable; losing the commits is not.
 The agent used is the one `agentadapter.NewAgentAdapterForMessage(root)`
 already builds for slice: it resolves the nested `commit` profile, which is
 low reasoning, and it is already constructed at that point in
-`cmd/sentinel/slice_command.go:46`. Do not add a new configuration key and do
+`cmd/vcsentinel/slice_command.go:46`. Do not add a new configuration key and do
 not build a second adapter. If the built adapter does not satisfy
 `Summarizer`, treat that as "agent unavailable" and take the warning path.
 
-Note the existing consent gate at `cmd/sentinel/slice_command.go:45`
+Note the existing consent gate at `cmd/vcsentinel/slice_command.go:45`
 (`allowsExternalAgentDiff`): it guards sending the **diff** to an external
 agent. A transcript is at least as sensitive. Send the transcript only when
 that same gate returns true; otherwise warn and produce no intent.
@@ -305,10 +305,10 @@ The plan is a serialised artifact reviewed by a human between `plan` and
 
   The zero-intent case is **not** "return the message unchanged". The two
   trailer keys are reserved: a generated or hand-written message that already
-  contains a `Sentinel-Intent` line would produce a commit claiming an intent
-  Sentinel never recorded, which is exactly the guarantee section 4.4 makes
+  contains a `vcSentinel-Intent` line would produce a commit claiming an intent
+  vcSentinel never recorded, which is exactly the guarantee section 4.4 makes
   when no flag is passed. So the helper always strips any pre-existing
-  `Sentinel-Intent` / `Sentinel-Intent-Source` trailer line first, then appends
+  `vcSentinel-Intent` / `vcSentinel-Intent-Source` trailer line first, then appends
   the real one if there is one. Test it: a message carrying a forged trailer,
   with no intent passed, produces a commit with no intent trailers at all.
 
@@ -322,11 +322,11 @@ The plan is a serialised artifact reviewed by a human between `plan` and
 
 ### 4.4 CLI
 
-`cmd/sentinel/slice_command.go`, `runSlicePlan` only. `slice apply` gains no
+`cmd/vcsentinel/slice_command.go`, `runSlicePlan` only. `slice apply` gains no
 flags: it applies what the plan says.
 
 ```
-sentinel slice plan --json [--intent "<text>" | --intent-transcript <path>]
+vcsentinel slice plan --json [--intent "<text>" | --intent-transcript <path>]
 ```
 
 - `--intent "<text>"` → `Normalize(text, SourceDeclared)`.
@@ -380,7 +380,7 @@ Unit, in `internal/intent`:
   never be obeyed. Deleting either instruction must fail a test. Without this
   the instructions can be removed and every listed test still passes.
 
-Integration, in `internal/git` and `cmd/sentinel`:
+Integration, in `internal/git` and `cmd/vcsentinel`:
 
 - Different intent ⇒ different `PlanID`.
 - `answers.json` from a plan without intent does not apply to a plan with
@@ -389,7 +389,7 @@ Integration, in `internal/git` and `cmd/sentinel`:
   trailers, and `CommitIntent` reads back exactly what was passed.
 - The same, through the transcript path, asserting the source is
   `conversation`.
-- No flags ⇒ the created commit has no `Sentinel-Intent` line anywhere.
+- No flags ⇒ the created commit has no `vcSentinel-Intent` line anywhere.
 - Agent unavailable on the transcript path ⇒ warning printed, plan produced,
   no intent, exit code unchanged.
 - Consent: without external-diff consent the transcript path refuses and the
@@ -416,7 +416,7 @@ Do not implement, and do not leave a stub for:
 - Any consumption of the intent by `pr review`, `pr create` or `review`.
 - Any command that annotates an existing commit.
 - Any branch-level intent declaration.
-- Any change to the interactive `sentinel slice` REPL.
+- Any change to the interactive `vcsentinel slice` REPL.
 - Any new configuration key.
 - `HonestNetIntention` and `--audit-pending`. Those belong to piece 4.
 
@@ -432,10 +432,10 @@ From `AGENTS.md`, in force and non-negotiable:
   asks for such a trailer.
 - Cross-platform: `filepath.Join` for paths, `filepath.ToSlash` when handing
   a path to git. This matters for `--intent-transcript`.
-- Run `sentinel check` before proposing a plan. The pre-commit hook enforces
-  400 staged authored lines; split the work with `sentinel slice plan --json`
+- Run `vcsentinel check` before proposing a plan. The pre-commit hook enforces
+  400 staged authored lines; split the work with `vcsentinel slice plan --json`
   and never answer a pending decision on the user's behalf.
-- Run `sentinel review` on every commit you create, and fix what it blocks
+- Run `vcsentinel review` on every commit you create, and fix what it blocks
   on before moving to the next one.
 
 ## 8. Verification
@@ -443,7 +443,7 @@ From `AGENTS.md`, in force and non-negotiable:
 ```
 go build ./...
 go vet ./...
-go test ./internal/intent ./internal/git ./cmd/sentinel
+go test ./internal/intent ./internal/git ./cmd/vcsentinel
 go test ./...
 ```
 
@@ -464,4 +464,4 @@ command, not the expectation.
 5. `feat(git): read the intent back from a commit` — `CommitIntent` and its
    round-trip test.
 
-Each one must build, pass its tests, and pass `sentinel review` on its own.
+Each one must build, pass its tests, and pass `vcsentinel review` on its own.

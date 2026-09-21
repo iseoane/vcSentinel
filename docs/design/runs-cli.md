@@ -1,4 +1,4 @@
-# `sentinel runs` — Durable Run Commands
+# `vcsentinel runs` — Durable Run Commands
 
 Operator entry points over the durable execution controller
 (`internal/execution`). Every subcommand is thin: it parses flags, delegates
@@ -19,12 +19,12 @@ formats output.
 | `runs verify` | `--run <id>`, `--json` | Deterministic integrity check: event-log hashes, chain continuity, lineage boundaries, and derived-projection-versus-replay equality. |
 | `runs prune` | `--older-than <duration>`, `--json` | Explicit operator maintenance (never automatic): removes ONLY terminal execution records whose last event predates the cutoff and that no review provenance references. Every other record is kept with an explicit machine-readable reason. See the retention policy below. |
 
-Unknown subcommands and unknown/incomplete flags exit `1`; bare `sentinel runs`
+Unknown subcommands and unknown/incomplete flags exit `1`; bare `vcsentinel runs`
 prints usage and exits `1`.
 
 ## Exit codes and terminal-state mapping
 
-Documented next to the dispatch in `cmd/sentinel/runs_command_decls.go`
+Documented next to the dispatch in `cmd/vcsentinel/runs_command_decls.go`
 (`runExitCode`) and mirrored here:
 
 | Code | Meaning | Mapped errors |
@@ -81,7 +81,7 @@ completed.
 Machine output never changes shape without a major note. The table below is
 the ONE consolidated reference for every stable JSON shape across `runs`
 commands. It is derived manually from the Go structs in
-`cmd/sentinel/runs_command_decls.go` (`runActionResult`,
+`cmd/vcsentinel/runs_command_decls.go` (`runActionResult`,
 `applyResultOutput`, `runsVerificationOutput`, `runsListEntry`,
 `runsStatusSummary`, `runsLogsOutput`, `runsRecoveryRow`, `runsRecoveryOutput`,
 `runsRepairOutput`, `runsPruneOutput`) and the store contracts they embed
@@ -166,7 +166,7 @@ The store itself never purges on its own: no timer, no background pass.
 Shrinking it happens through two operator-visible paths that share the
 same guards and the same report shape. Retention is append-only evidence
 by default:
-- **What purges:** `sentinel runs prune --older-than <duration>` removes a
+- **What purges:** `vcsentinel runs prune --older-than <duration>` removes a
   whole per-run directory under `executions/v1/<run_id>/` only when ALL of
   the following hold:
   - its immutable admission records exist and decode;
@@ -215,17 +215,17 @@ by default:
   purge keyed by commit SHA, never by age; execution pruning never touches
   it, and ops purging never touches executions.
 - **Event-driven retention (T9.5):** after a successful `rebase` and after
-  every `gate --stage pre-push` decision, sentinel runs one best-effort
+  every `gate --stage pre-push` decision, vcsentinel runs one best-effort
   retention pass with no age cutoff (`now`) and provenance limited to
   UNPUBLISHED review records: streams cited only by published commits
   (ancestors of `origin/main`) become collectible under the identical
   guards above — terminal, measured, single-attempt, unreferenced. Review
   fichas, the ops event log, and metrics snapshots are never touched by
-  either path, so `sentinel metrics` is byte-identical before and after.
+  either path, so `vcsentinel metrics` is byte-identical before and after.
   A skipped pass reports one line and never fails the operation that
   triggered it.
 
-## `sentinel metrics --json` executions failures shape
+## `vcsentinel metrics --json` executions failures shape
 
 `executions.failures[]` reports one row per failure class with its source population and evidence denominator, so outcome and semantic classes are never confused:
 
@@ -288,7 +288,7 @@ still fully readable after R11:
   absent, and their per-dimension v1 findings still project into the uniform
   v2 finding shape for reporting and branch analysis.
 - **Pre-R1 repositories:** there is no conversion step. A repository created
-  before R1 has no `vas-sentinel` directory yet; it simply gains the ledger
+  before R1 has no `vcsentinel` directory yet; it simply gains the ledger
   and execution files on demand the first time a review, gate, or `runs`
   command writes them. Nothing is rewritten or migrated.
 
@@ -387,7 +387,7 @@ transport served them.
   rejected completion surfaces as first-class evidence with the literal
   `admission:` reason prefix — distinct from infrastructure failures in gate,
   review, and pr reporting. Setting `review.evidence_admission: false` in
-  `vassentinel.yml` restores lenient acceptance while every run stays fully
+  `vcsentinel.yml` restores lenient acceptance while every run stays fully
   inspectable through these `runs` commands.
 - Cancellation escalation (ticket 08) is default-on: when a routed review
   owns its provider process tree, an abort cooperates for the grace budget,
@@ -398,7 +398,7 @@ transport served them.
   owner died mid-cancellation is classified canceled-orphaned on next
   observation through restart reconciliation — no fabricated completion, no
   silent resume, and the append-only stream is never rewritten.
-- Gate durable runs (ticket 11, unconditional since R11): `sentinel gate`
+- Gate durable runs (ticket 11, unconditional since R11): `vcsentinel gate`
   executes as ONE root durable run with deterministic validation jobs and the
   routed review invocations as children linked through their persisted parent
   linkage, so the gate summary reconstructs from store contents alone. The

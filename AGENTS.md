@@ -1,6 +1,6 @@
-# VAS Sentinel Working Guide
+# vcSentinel Working Guide
 
-VAS Sentinel is a deterministic local Go guardian that reports accumulated worktree volume and enforces reviewable staged commits operated by AI agents. Module: `github.com/ISeoane-Quental/vas.sentinel` (Go 1.26).
+vcSentinel is a deterministic local Go guardian that reports accumulated worktree volume and enforces reviewable staged commits operated by AI agents. Module: `github.com/ISeoane-Quental/vcSentinel` (Go 1.26).
 
 ## Language and model policy
 
@@ -12,34 +12,34 @@ VAS Sentinel is a deterministic local Go guardian that reports accumulated workt
 
 ## Agent workflow: use the two-step slice flow
 
-`sentinel slice` without arguments is an interactive stdin REPL and agents cannot drive it. Use this non-interactive flow instead:
+`vcsentinel slice` without arguments is an interactive stdin REPL and agents cannot drive it. Use this non-interactive flow instead:
 
-`sentinel check` measures the whole worktree and is advisory, including at `CRITICAL`. The repository pre-commit hook invokes `sentinel check --staged`; that staged candidate is the enforcement boundary for the 400-line review budget. If `sentinel` is not on PATH, use `go run ./cmd/sentinel <args>` from the repo root instead.
+`vcsentinel check` measures the whole worktree and is advisory, including at `CRITICAL`. The repository pre-commit hook invokes `vcsentinel check --staged`; that staged candidate is the enforcement boundary for the 400-line review budget. If `vcsentinel` is not on PATH, use `go run ./cmd/vcsentinel <args>` from the repo root instead.
 
-1. Run `sentinel slice plan --json > plan.json`. It proposes reviewable selections and **does not create commits**. It is idempotent: the same tree produces the same `plan_id`.
+1. Run `vcsentinel slice plan --json > plan.json`. It proposes reviewable selections and **does not create commits**. It is idempotent: the same tree produces the same `plan_id`.
    - Exit `0`: no decision is required.
    - Exit `3`: the plan contains `pending_decisions[]`. Present those decisions to the user verbatim and wait for an answer. Do not answer on their behalf or select a default.
 2. Write `answers.json` with the user's literal response: `{"plan_id":"<plan_id>","answers":{"<id>":"bypass"|"abort"}}`.
-3. Run `sentinel slice apply --plan plan.json --answers answers.json`. It commits only if the worktree has not changed, the answers match that `plan_id`, and every decision has an explicit answer.
+3. Run `vcsentinel slice apply --plan plan.json --answers answers.json`. It commits only if the worktree has not changed, the answers match that `plan_id`, and every decision has an explicit answer.
 
 The human retains the decision. This flow only changes how the question is transported.
 
 ## Build and verification
 
-- **Windows:** `build.bat` creates `bin\\<version>\\sentinel.exe`.
-- **Debian/Linux:** `./build.sh` creates `bin/<version>/sentinel` and may require `chmod +x build.sh`.
+- **Windows:** `build.bat` creates `bin\\<version>\\vcsentinel.exe`.
+- **Debian/Linux:** `./build.sh` creates `bin/<version>/vcsentinel` and may require `chmod +x build.sh`.
 - Both build scripts run `gofmt -w .`, `go vet ./...`, and `go build -ldflags="-s -w -X main.version=<version>"`. Prefer them over a plain `go build`.
-- `release.yml` is the version source of truth. `SENTINEL_VERSION` may override it.
+- `release.yml` is the version source of truth. `VCSENTINEL_VERSION` may override it.
 - Built binaries belong in `bin/<version>/`; they are ignored by Git and must not be committed.
 - For quick verification, run `go build ./...` and `go vet ./...`.
 - Generate cross-platform release assets with `go run ./tools/release`. Publish the complete release with `infra/release.bat` or `infra/release.sh`.
-- Bootstrap installation without an existing binary with `go install github.com/ISeoane-Quental/vas.sentinel/cmd/sentinel@latest`.
+- Bootstrap installation without an existing binary with `go install github.com/ISeoane-Quental/vcSentinel/cmd/vcsentinel@latest`.
 
 ## Tests
 
 - Whole suite: `go test ./...`. It passes and takes about three minutes; `internal/durableruns_e2e`, `internal/daemon`, and `internal/process` spawn real child processes, so they dominate that time.
 - Single package: `go test ./internal/execution`.
-- Single test: `go test ./cmd/sentinel -run TestCheck`.
+- Single test: `go test ./cmd/vcsentinel -run TestCheck`.
 - Golden files live in two independent packages with their own `-update` flag; regenerate each one separately: `go test ./internal/tui -update` and `go test ./internal/tui/art -update`.
 
 ## Cross-platform requirements
@@ -50,17 +50,17 @@ Code and scripts MUST behave the same on Windows and Debian:
 - Pass paths to Git through `filepath.ToSlash`.
 - The `pre-commit` hook uses `#!/bin/sh`; Git for Windows executes it through `sh.exe`.
 - Write the hook directly to the repository common directory (`<git-common-dir>/hooks/pre-commit`, obtained through `git rev-parse --git-common-dir`). Do not use a global folder or `core.hooksPath`.
-- The hook runs `sentinel check --staged` through the binary's absolute path. It rejects staged authored code over the 400-line review budget and affects only that repository and its linked worktrees.
+- The hook runs `vcsentinel check --staged` through the binary's absolute path. It rejects staged authored code over the 400-line review budget and affects only that repository and its linked worktrees.
 
 ## Architecture
 
-- `cmd/sentinel` is the CLI entry point and dispatches commands. Command handlers cover review, status, PRs, the validation gate, risk explanation, and external-diff consent.
-- `internal/config` parses `vassentinel.yml`: agents, nested profiles, `commit_language`, review profiles, validation profiles, the optional `ci` block, and lint/test/build commands. Precedence is defaults, global (`~/.vas_sentinel/vassentinel.yml`), then project (`.vas_sentinel/vassentinel.yml`).
+- `cmd/vcsentinel` is the CLI entry point and dispatches commands. Command handlers cover review, status, PRs, the validation gate, risk explanation, and external-diff consent.
+- `internal/config` parses `vcsentinel.yml`: agents, nested profiles, `commit_language`, review profiles, validation profiles, the optional `ci` block, and lint/test/build commands. Precedence is defaults, global (`~/.vcsentinel/vcsentinel.yml`), then project (`.vcsentinel/vcsentinel.yml`).
 - `internal/agentadapter` provides `AgentAdapter`, CLI adapters, and `CadenaAdaptador` fallback. It records the effective binary, model, and reasoning effort for each successful request.
 - `internal/git` owns volume thresholds, measurement, change slicing, non-interactive `plan`/`apply`, and file classification.
-- `internal/review` runs dimension-based audits, builds prompts, persists the legacy append-only review ledger, analyzes branches, and supports content-stable review findings. `review`, `status` and `pr` anchor that ledger on `<git-common-dir>/vas-sentinel` through `sharedReviewLedger`, so a review run in a linked worktree is not destroyed by `git worktree remove`. Fichas written under a per-checkout ledger before that are not migrated; `runs prune`, `status --prune` and `review --prune` still enumerate every per-checkout ledger, and nothing else reads them.
-- `internal/store` persists units, runs, findings, commit indexes, decisions, PR-review entries, and blob indexes in `<git-common-dir>/vas-sentinel`. Blob indexes preserve review coverage across rebases when file content is unchanged.
-- `internal/gate` runs the deterministic validation profile and reports pass, validation failure, or infrastructure status. It does NOT audit code quality: `sentinel review` owns per-commit verdicts and is their only writer.
+- `internal/review` runs dimension-based audits, builds prompts, persists the legacy append-only review ledger, analyzes branches, and supports content-stable review findings. `review`, `status` and `pr` anchor that ledger on `<git-common-dir>/vcsentinel` through `sharedReviewLedger`, so a review run in a linked worktree is not destroyed by `git worktree remove`. Fichas written under a per-checkout ledger before that are not migrated; `runs prune`, `status --prune` and `review --prune` still enumerate every per-checkout ledger, and nothing else reads them.
+- `internal/store` persists units, runs, findings, commit indexes, decisions, PR-review entries, and blob indexes in `<git-common-dir>/vcsentinel`. Blob indexes preserve review coverage across rebases when file content is unchanged.
+- `internal/gate` runs the deterministic validation profile and reports pass, validation failure, or infrastructure status. It does NOT audit code quality: `vcsentinel review` owns per-commit verdicts and is their only writer.
 - `internal/change`, `internal/risk`, and `internal/graph` profile a change, calculate cohesion and risk, and optionally enrich review context from CodeGraph metadata tied to the audited commit.
 - `internal/consent` records local consent for externally supplied diffs.
 - `internal/ops` records, rotates, purges, and reads events from the repository common directory.
@@ -68,7 +68,7 @@ Code and scripts MUST behave the same on Windows and Debian:
 
 Durable runs/Control Center are layered on the same common directory: `internal/agentrun` + `internal/reviewcontract` are contracts, `internal/execution` is the controller over `internal/store` event stream with `internal/planning`, `internal/acpadapter`, `internal/reviewexec`, `internal/reviewsnapshot`, `internal/remediation`, `internal/process`; observation flows `internal/registry`+`internal/inventory`+`internal/presence`→`internal/overview`, `internal/attach`→`internal/tui`; `internal/daemon` owns the daemon, `internal/validation` the gate checks.
 
-Durable-run roadmap work (`sentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification. Implementation work done through a delegated writer must load `.claude/skills/implementation-task/SKILL.md` first.
+Durable-run roadmap work (`vcsentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification. Implementation work done through a delegated writer must load `.claude/skills/implementation-task/SKILL.md` first.
 
 Reference documents: [`docs/design/replanteamiento-objetivo.md`](docs/design/replanteamiento-objetivo.md), [`docs/design/agent-execution-control-options.md`](docs/design/agent-execution-control-options.md), [`docs/design/acpx-capability-mapping.md`](docs/design/acpx-capability-mapping.md), [`docs/design/acpx-production-adapter.md`](docs/design/acpx-production-adapter.md), and [`docs/design/runs-cli.md`](docs/design/runs-cli.md) for the `runs` flag and exit-code contract. Open work and past decisions live in [`docs/issues/`](docs/issues/).
 
@@ -117,7 +117,7 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 - `explain`: analyzes a `<base>..<head>` range, detects change characteristics, evaluates risk, and suggests a split when cohesion warrants it.
 - `pr review`: chooses single versus chained review using `review.DecisionChainLimit`, which equals the guardian limit of 400 lines. It authors and persists a local branch judgement and evidence without publishing or running deterministic validation.
 - `pr create`: audits nothing. It requires a persisted `pr review` entry for the branch whose head matches the current head and whose evidence is committed, otherwise it exits `1` naming what is missing; it then replaces only the `ci` step of the stored body and publishes the stored title and body through `gh`. A red deterministic validation is still the only publication gate, overridable with `--force --reason`. See [`docs/design/piece-5-pr-create-composes.md`](docs/design/piece-5-pr-create-composes.md).
-- `tui`: renders the global registry snapshot (`~/.vas_sentinel/repositories.json`) live at a 2-second interval through `internal/tui/control` and the approved art layout. When no daemon is live for the current repository it spawns one detached child and owns it for the session; foreign daemons are never stopped. The activity pane renders repository and durable-run state, supports filtered repository/worktree/run navigation, and dispatches abort/retry only for the visible session-repository run. It shows up to 20 worktree children and 10 recent runs per repository.
+- `tui`: renders the global registry snapshot (`~/.vcsentinel/repositories.json`) live at a 2-second interval through `internal/tui/control` and the approved art layout. When no daemon is live for the current repository it spawns one detached child and owns it for the session; foreign daemons are never stopped. The activity pane renders repository and durable-run state, supports filtered repository/worktree/run navigation, and dispatches abort/retry only for the visible session-repository run. It shows up to 20 worktree children and 10 recent runs per repository.
 - `doctor`: reports the review-environment preflight and exits `0` like `check`. It never gates anything and never installs — warnings print the command to run instead. Binaries resolve with `exec.LookPath`, never a shell probe. Each configured agent must resolve and answer a minimal real prompt within 60s; version comparison against the published release stays behind `--check-updates`. A condition whose prober did not run renders as UNKNOWN with no remedy, never as a failure.
 - `init`: runs only from a Git worktree root, redirects there when invoked from a subdirectory, writes the project configuration, injects the marked guardian rule into agent instruction files, and installs the repository-local common-dir hook that enforces staged volume.
 
@@ -131,10 +131,10 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 - `internal/git/thresholds.go` is the sole threshold source: `ReviewableLinesLimit` is 400 and governs the guardian, slicing, and `review.DecisionChainLimit`; `GiantCodeLimit` is 500.
 - `MY_SUB_AGENT` remains an optional override, not the primary configuration path.
 
-<!-- vas-sentinel:begin -->
+<!-- vcsentinel:begin -->
 ## CRITICAL VOLUME RULE (THE GUARDIAN)
-- Before making changes or proposing a plan, run `sentinel check`. It measures the whole worktree and is advisory, including when the state is `CRITICAL`.
-- The repository's `pre-commit` hook runs `sentinel check --staged`. This is the enforcement boundary: it rejects staged authored code over the 400-line review budget.
-- When the worktree check is `CRITICAL`, run `sentinel slice plan --json` to produce reviewable selections without committing.
-- After the user answers every pending decision, apply the approved selections with `sentinel slice apply --plan plan.json --answers answers.json`. Never answer those decisions on the user's behalf.
-<!-- vas-sentinel:end -->
+- Before making changes or proposing a plan, run `vcsentinel check`. It measures the whole worktree and is advisory, including when the state is `CRITICAL`.
+- The repository's `pre-commit` hook runs `vcsentinel check --staged`. This is the enforcement boundary: it rejects staged authored code over the 400-line review budget.
+- When the worktree check is `CRITICAL`, run `vcsentinel slice plan --json` to produce reviewable selections without committing.
+- After the user answers every pending decision, apply the approved selections with `vcsentinel slice apply --plan plan.json --answers answers.json`. Never answer those decisions on the user's behalf.
+<!-- vcsentinel:end -->

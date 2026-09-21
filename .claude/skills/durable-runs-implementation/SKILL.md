@@ -1,6 +1,6 @@
 ---
 name: durable-runs-implementation
-description: "Trigger: durable runs, sentinel runs, R0-R11, A units, D units, durable-run tickets. Execute one roadmap unit with bounded changes, independent verification, and truthful evidence."
+description: "Trigger: durable runs, vcsentinel runs, R0-R11, A units, D units, durable-run tickets. Execute one roadmap unit with bounded changes, independent verification, and truthful evidence."
 license: Apache-2.0
 metadata:
   author: iseoane
@@ -9,7 +9,7 @@ metadata:
 
 ## Activation Contract
 
-Load for any implementation or verification of the `sentinel runs` roadmap. Read
+Load for any implementation or verification of the `vcsentinel runs` roadmap. Read
 the roadmap, the active local ticket, and the unit-skill matrix before changing
 files.
 
@@ -18,7 +18,7 @@ files.
 - Work on exactly one ticket whose blockers are complete; keep the ticket status and evidence current.
 - Run the guardian before a bounded write. Use the noninteractive slice plan/apply flow when the review budget requires it; never answer pending human decisions.
 - Keep artifacts in English. Delegate implementation to the available `reingenieria-implementer` subagent, not merely to the repository's configured implementation agent. The delegating agent owns frontier and blocker checks, guardian execution, human slice-decision transport without answering on the user's behalf, deterministic verification, independent `code-review`, ticket evidence, and closure.
-- Direct the implementer to make only the ticket's bounded code/test changes and run focused build/test checks. It must not self-review, independently accept findings, run `sentinel slice apply`, commit, update or close the ticket, or claim closure.
+- Direct the implementer to make only the ticket's bounded code/test changes and run focused build/test checks. It must not self-review, independently accept findings, run `vcsentinel slice apply`, commit, update or close the ticket, or claim closure.
 - Use the `code-review` skill for the independent review of every durable-runs ticket until the roadmap reaches R11 completion; stronger audits in the matrix are additional, not substitutes.
 - Verify the real diff independently with build, vet, focused tests, full tests, guardian, and the applicable review path.
 - Preserve unrelated worktree changes. Do not debug provider reliability as a substitute for making failed calls durable.

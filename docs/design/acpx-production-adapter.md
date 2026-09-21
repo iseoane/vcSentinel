@@ -1,7 +1,7 @@
 # The Production ACP/acpx Adapter
 
 **Ticket:** 16 (`A2`), slice 3. **Audience:** operators configuring and
-diagnosing `vassentinel.yml` agents that run through the ACP/acpx strategy.
+diagnosing `vcsentinel.yml` agents that run through the ACP/acpx strategy.
 **Design basis:** [`acpx-capability-mapping.md`](acpx-capability-mapping.md)
 (A1 verdict `suitable-with-constraints`, constraints C1-C8).
 
@@ -84,7 +84,7 @@ Backend-specific status:
 
 ## Diagnostics
 
-- `sentinel runs status|logs|verify` — review-path outputs are hash-admitted
+- `vcsentinel runs status|logs|verify` — review-path outputs are hash-admitted
   as evidence by DurableTransport (R6), and runs-prompt durable requests
   record an `agent.enforcement` capability carrying the declared backend —
   except under a configured daemon endpoint, where admission stays in legacy

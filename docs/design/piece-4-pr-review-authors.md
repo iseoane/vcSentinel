@@ -12,7 +12,7 @@ document wins.
 
 **Do the pieces tell a coherent, complete story?**
 
-It does not re-audit the individual commits: `sentinel review` owns that and is
+It does not re-audit the individual commits: `vcsentinel review` owns that and is
 the only writer of per-commit verdicts. `pr review` reads those verdicts and
 looks at what is only visible with every piece together — whether something is
 missing, whether one piece undoes another, whether the result does what the
@@ -64,7 +64,7 @@ From piece 1, and **the provenance is rendered, never dropped**:
   Never omit it silently. The Risk Assessment is measured against the intent,
   and a reader must know the intent covers only part of the branch.
 - No commit carries a trailer ⇒ render exactly:
-  `_No intent recorded. These commits were not created through `sentinel slice`._`
+  `_No intent recorded. These commits were not created through `vcsentinel slice`._`
   Do not summarise the diff to fill the gap. An invented intent is worse than
   an absent one, because the Risk Assessment below is measured against it.
 
@@ -182,12 +182,12 @@ line encodes the outcome:
 <details><summary>✅ <b>review</b> — 4 commits audited, no pending blocks</summary>
 <details><summary>🔧 <b>review</b> — 2 blocks, both retired by later commits</summary>
 <details><summary>⚠️ <b>lint</b> — exit 1</summary>
-<details><summary>⚪ <b>ci</b> — not observed by Sentinel</summary>
+<details><summary>⚪ <b>ci</b> — not observed by vcSentinel</summary>
 ```
 
-The `review` step is where Sentinel is stronger than the reference and must
+The `review` step is where vcSentinel is stronger than the reference and must
 show it. The reference asserts in prose that it found problems and fixed them.
-Sentinel has the ledger: the commit that blocked, the finding with its
+vcSentinel has the ledger: the commit that blocked, the finding with its
 `file:line`, the later commit that retired the block, and the re-audit that
 cleared it. Render that chain, SHA by SHA. It is evidence, not a claim.
 
@@ -200,7 +200,7 @@ One HTML comment, invisible to the reader, immediately before the Pipeline
 section:
 
 ```
-<!-- vas-sentinel-attestation:v1 {"head_sha":"...","branch":"...","verdict":"...","steps":[{"step":"slice","status":"passed"},{"step":"review","status":"passed"},{"step":"gate","status":"not_attempted"},{"step":"lint","status":"not_attempted"},{"step":"test","status":"not_attempted"},{"step":"build","status":"not_attempted"},{"step":"pr review","status":"authored"},{"step":"ci","status":"not_observed"}]} -->
+<!-- vcsentinel-attestation:v1 {"head_sha":"...","branch":"...","verdict":"...","steps":[{"step":"slice","status":"passed"},{"step":"review","status":"passed"},{"step":"gate","status":"not_attempted"},{"step":"lint","status":"not_attempted"},{"step":"test","status":"not_attempted"},{"step":"build","status":"not_attempted"},{"step":"pr review","status":"authored"},{"step":"ci","status":"not_observed"}]} -->
 ```
 
 `v1` in the marker is the schema version and is mandatory: a later reader must
@@ -219,7 +219,7 @@ Long evidence is written to the repository working tree, not only pasted. The
 body is truncated at `PRBodyLimit` (`internal/review/pr_review_body.go` and
 `internal/review/pr_review_truncation.go`); an evidence log is not.
 
-- Location: `.vas_sentinel/evidence/<branch-slug>-<branch-identity-hash>/<step>.log`,
+- Location: `.vcsentinel/evidence/<branch-slug>-<branch-identity-hash>/<step>.log`,
   where the identity hash is derived from the exact branch name to distinguish
   branches with the same slug.
 - Written by `pr review`, in the working tree, as ordinary files. It does not
@@ -241,7 +241,7 @@ body is truncated at `PRBodyLimit` (`internal/review/pr_review_body.go` and
   other value that changes between runs, and a second run whose evidence bytes
   differ from the tracked ones is a bug in that determinism — report it as an
   error naming the file, do not ask for a third commit.
-- Consequence to accept: these logs are inside the worktree, so `sentinel check`
+- Consequence to accept: these logs are inside the worktree, so `vcsentinel check`
   measures them. They are not authored code, so they must classify as such —
   verify with a test that a large evidence log does not push `check --staged`
   over the 400-line budget. If it does, the classification is the bug, not the
@@ -289,7 +289,7 @@ everything after it. `TruncateBody` stays as the last-resort backstop only.
 `pr review` writes one entry. Piece 5 will make `pr create` read it and refuse
 to publish without one.
 
-- Location: `<git-common-dir>/vas-sentinel/pr-reviews/<key>.json`, through
+- Location: `<git-common-dir>/vcsentinel/pr-reviews/<key>.json`, through
   `internal/store`, alongside the review ledger. Anchoring on the common
   directory matters for the same reason it did for the ledger: a review run in
   a linked worktree must not die with `git worktree remove`.
@@ -360,15 +360,15 @@ judgement about a different tree.
 ## 4. `--audit-pending`
 
 Retire it. Its behaviour — `pr review` auditing commits that carry no record —
-is exactly the boundary this design moved to `sentinel review`. Follow the
-precedent already set for `--only-unaudited` (`cmd/sentinel/pr_command.go:67`):
+is exactly the boundary this design moved to `vcsentinel review`. Follow the
+precedent already set for `--only-unaudited` (`cmd/vcsentinel/pr_command.go:67`):
 refuse the flag with a message naming the replacement, rather than removing it
 silently.
 
 ```
 --audit-pending was retired: pr review no longer audits commits, and never
-audits them on your behalf. Run `sentinel review <sha>` for each unaudited
-commit; `sentinel pr review` reports which ones they are.
+audits them on your behalf. Run `vcsentinel review <sha>` for each unaudited
+commit; `vcsentinel pr review` reports which ones they are.
 ```
 
 `BranchResult.Unaudited` keeps its meaning and is what the `review` Pipeline
@@ -379,7 +379,7 @@ not change it.
 ## 5. Out of scope
 
 - Everything `pr create` does: pushing, `gh`, CI, publication. That is piece 5.
-- Any change to `sentinel review` or the per-commit verdict.
+- Any change to `vcsentinel review` or the per-commit verdict.
 - Re-auditing commits under any flag.
 - The live-vs-deterministic test classification of the reference.
 - Pruning the evidence directory. Note it as follow-up work; do not build it.
@@ -425,7 +425,7 @@ locally instead of calling the function under test is not a test.
 
 All of `AGENTS.md` applies: English artifacts, Conventional Commits, no agent
 attribution trailers, `filepath.Join` for paths and `filepath.ToSlash` for git,
-`sentinel check` before proposing, and `sentinel review` on every commit you
+`vcsentinel check` before proposing, and `vcsentinel review` on every commit you
 create.
 
 ## 8. Verification
@@ -433,7 +433,7 @@ create.
 ```
 go build ./...
 go vet ./...
-go test ./internal/review ./internal/app/pr ./cmd/sentinel
+go test ./internal/review ./internal/app/pr ./cmd/vcsentinel
 go test ./...
 ```
 
@@ -455,4 +455,4 @@ Report the observed result of each command.
    entry, the key, and the staleness rule.
 7. `feat(pr): retire --audit-pending` — the refusal and its message.
 
-Each one must build, pass its tests, and pass `sentinel review` on its own.
+Each one must build, pass its tests, and pass `vcsentinel review` on its own.
