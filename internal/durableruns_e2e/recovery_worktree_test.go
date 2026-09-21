@@ -100,7 +100,7 @@ func TestRecoveryOrphanedCanceledRelaunchesExplicitlyAndScanCleansUp(t *testing.
 func TestLinkedWorktreesObserveIdenticalRunStateThroughCommonDirStore(t *testing.T) {
 	repoRoot := t.TempDir()
 	runGit(t, repoRoot, "init", "-q")
-	runGit(t, repoRoot, "config", "user.email", "e2e@vas.sentinel")
+	runGit(t, repoRoot, "config", "user.email", "e2e@vcsentinel")
 	runGit(t, repoRoot, "config", "user.name", "durable-runs-e2e")
 	writeRepoFile(t, repoRoot, "tracked.txt", "tracked\n")
 	runGit(t, repoRoot, "add", "tracked.txt")

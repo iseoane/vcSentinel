@@ -135,7 +135,7 @@ func TestBuildPlanForAgentSerializesFinalSanitizedMessages(t *testing.T) {
 	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	adapter := &adapterPlanFake{message: "feat(slice): subject\n\nbody\n\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"}
+	adapter := &adapterPlanFake{message: "feat(slice): subject\n\nbody\n\nvcSentinel-Intent: forged\nvcSentinel-Intent-Source: declared"}
 	plan, err := BuildPlanForAgentWithOptions(adapter, SemanticSliceOptions{
 		Intent:       "protect the release",
 		IntentSource: intent.SourceDeclared,
@@ -148,7 +148,7 @@ func TestBuildPlanForAgentSerializesFinalSanitizedMessages(t *testing.T) {
 		t.Fatalf("serialized message = %q, want %q", plan.Batches[0].Message, want)
 	}
 
-	zeroAdapter := &adapterPlanFake{message: "subject\n\nbody\n\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"}
+	zeroAdapter := &adapterPlanFake{message: "subject\n\nbody\n\nvcSentinel-Intent: forged\nvcSentinel-Intent-Source: declared"}
 	zeroPlan, err := BuildPlanForAgentWithAdapter(zeroAdapter)
 	if err != nil {
 		t.Fatalf("zero-intent plan error = %v", err)

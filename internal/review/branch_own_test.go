@@ -33,8 +33,8 @@ func prepareStackRepo(t *testing.T) stackRepo {
 	t.Chdir(repo)
 	for _, args := range [][]string{
 		{"init", "-b", "main"},
-		{"config", "user.email", "test@vas.sentinel"},
-		{"config", "user.name", "VAS Sentinel Test"},
+		{"config", "user.email", "test@vcsentinel"},
+		{"config", "user.name", "vcSentinel Test"},
 		{"config", "core.hooksPath", ""},
 	} {
 		runGit(t, args...)

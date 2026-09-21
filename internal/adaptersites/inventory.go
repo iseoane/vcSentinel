@@ -157,7 +157,7 @@ func Sites() []Site {
 		{Path: "cmd/vcsentinel/runs_command_actions.go", Symbol: "runs start/respond/abort/retry/recover via RepositoryHost", Anchor: "", Marker: "",
 			Class: ClassDurable, Reason: "Operator control actions apply exclusively through execution.RepositoryHost/controller APIs over the common-dir store; the admission request construction itself moved to execution.ResolveAdmissionRequest (internal/execution/host.go), so this file no longer matches any canary token and is documented as a path-decision row."},
 		{Path: "cmd/vcsentinel/runs_command.go", Symbol: "promptRunAdapter/buildRunsController", Anchor: "return execution.NewController(backing, promptAdapter), nil", Marker: "NewController(",
-			Class: ClassDurable, Reason: "`sentinel runs` operator prompts execute ONLY inside the controller flow: buildRunsController hands promptRunAdapter to execution.NewController, so every Execute receives the admitted InvocationEnvelope. This closes the parallel path R7 slice 2 left out of scope."},
+			Class: ClassDurable, Reason: "`vcsentinel runs` operator prompts execute ONLY inside the controller flow: buildRunsController hands promptRunAdapter to execution.NewController, so every Execute receives the admitted InvocationEnvelope. This closes the parallel path R7 slice 2 left out of scope."},
 		{Path: "cmd/vcsentinel/tui_command.go", Symbol: "spawnDetachedTuiDaemon", Anchor: "cmd := exec.Command(exe, \"runs\", \"daemon\", \"start\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Control-center daemon lifecycle (slice 9): spawns THIS binary as `runs daemon start` detached for the current repository; the child admits runs through the same durable controller path as every other daemon start. Never spawns a provider agent directly."},
 		{Path: "cmd/vcsentinel/staged_check.go", Symbol: "staged volume plumbing", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
@@ -281,9 +281,9 @@ func Sites() []Site {
 		{Path: "internal/setup/upgrade.go", Symbol: "upgrader", Anchor: "cmd := exec.Command(currentBinary, \"--version\")", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Binary version probe for upgrades."},
 		{Path: "tools/release/main.go", Symbol: "release tooling", Anchor: "cmd := exec.Command(\"gh\", \"release\", \"view\", \"--json\", \"tagName\", \"--jq\", \".tagName\")", Marker: "exec.Command",
-			Class: ClassInfra, Reason: "Release asset tooling outside the sentinel runtime."},
+			Class: ClassInfra, Reason: "Release asset tooling outside the vcSentinel runtime."},
 		{Path: "tools/fu10divergence/main.go", Symbol: "divergence measurement harness", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
-			Class: ClassInfra, Reason: "Read-only Git plumbing for the FU-10 divergence measurement (ticket 03): rev-list, diff-tree and show against existing commits. Analysis tooling outside the sentinel runtime; consults no agent and mutates nothing."},
+			Class: ClassInfra, Reason: "Read-only Git plumbing for the FU-10 divergence measurement (ticket 03): rev-list, diff-tree and show against existing commits. Analysis tooling outside the vcSentinel runtime; consults no agent and mutates nothing."},
 	}
 }
 

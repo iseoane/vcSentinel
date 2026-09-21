@@ -43,7 +43,7 @@ func initActivityRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	runActivityGit(t, dir, "add", ".")
-	runActivityGit(t, dir, "-c", "user.email=test@vas.sentinel", "-c", "user.name=VAS Sentinel Test",
+	runActivityGit(t, dir, "-c", "user.email=test@vcsentinel", "-c", "user.name=vcSentinel Test",
 		"-c", "commit.gpgsign=false", "commit", "-q", "-m", "chore: base")
 	return dir
 }
@@ -128,8 +128,12 @@ func pinClock(t *testing.T, now time.Time) {
 }
 
 func liveRepo(name string, worktrees ...inventory.Worktree) overview.Repo {
+	origin := "git@github.com:org/" + name
+	if name == "vcsentinel" {
+		origin = "git@github.com:ISeoane-Quental/vcSentinel"
+	}
 	return overview.Repo{Name: name, Path: filepath.Join("/tmp", name), Enabled: true,
-		Origin: "git@github.com:org/" + name, Worktrees: worktrees,
+		Origin: origin, Worktrees: worktrees,
 		Daemon: presence.Presence{Live: true, PID: 4321}}
 }
 
@@ -178,10 +182,10 @@ func assertContains(t *testing.T, got string, wants ...string) {
 }
 
 func TestRenderOverviewHealthySingleRepo(t *testing.T) {
-	dash := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{liveRepo("vas.sentinel", wt("main", true))}})
-	assertContains(t, dash, "SENTINEL CONTROL CENTER", "REPOSITORIES", "LOCATION",
-		"ACTIVITY", "vas.sentinel", "● live", "main", "clean",
-		"git@github.com:org/vas.sentinel", "pid 4321",
+	dash := RenderOverviewPlain(100, ViewState{Repos: []overview.Repo{liveRepo("vcsentinel", wt("main", true))}})
+	assertContains(t, dash, "VCSENTINEL CONTROL CENTER", "REPOSITORIES", "LOCATION",
+		"ACTIVITY", "vcsentinel", "● live", "main", "clean",
+		"git@github.com:ISeoane-Quental/vcSentinel", "pid 4321",
 		"1 clean · 0 dirty · 1 worktrees", "navigate")
 	assertWidth(t, dash, 100)
 }
@@ -307,9 +311,9 @@ func TestRenderOverviewEmptyRegistry(t *testing.T) {
 
 func TestRenderOverviewStacksBelow84(t *testing.T) {
 	dash := RenderOverviewPlain(70, ViewState{Repos: []overview.Repo{
-		liveRepo("vas.sentinel", wt("main", true)), stoppedRepo("second"),
+		liveRepo("vcsentinel", wt("main", true)), stoppedRepo("second"),
 	}})
-	assertContains(t, dash, "REPOSITORIES", "LOCATION", "ACTIVITY", "vas.sentinel", "second")
+	assertContains(t, dash, "REPOSITORIES", "LOCATION", "ACTIVITY", "vcsentinel", "second")
 	assertWidth(t, dash, 70)
 	if strings.Contains(dash, " │ ") {
 		t.Error("stacked layout must not draw the pane separator")
@@ -343,7 +347,7 @@ func TestRenderOverviewPlainMatchesColoredRuneParity(t *testing.T) {
 		name string
 		view ViewState
 	}{
-		{"healthy", ViewState{Repos: []overview.Repo{liveRepo("vas.sentinel", wt("main", true))}}},
+		{"healthy", ViewState{Repos: []overview.Repo{liveRepo("vcsentinel", wt("main", true))}}},
 		{"multi", ViewState{Repos: []overview.Repo{stoppedRepo("multi", wt("main", true), wt("feature", false))}}},
 		{"overflow", ViewState{Repos: []overview.Repo{
 			stoppedRepo("big", manyWorktrees(15)...), stoppedRepo("after")}}},
@@ -822,7 +826,7 @@ func TestOverviewActivityRunStateMapping(t *testing.T) {
 func TestRenderOverviewMixedRepoReplacesSummaryWithRuns(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	pinClock(t, now)
-	repos := []overview.Repo{liveRepo("vas.sentinel", wt("main", true), wt("feature", false))}
+	repos := []overview.Repo{liveRepo("vcsentinel", wt("main", true), wt("feature", false))}
 	repos[0].Runs = []presence.RunSummary{
 		runWithTimes("aaaaaaaaaaaaaaaaaaaa", agentrun.StateRunning, 4,
 			now.Add(-2*time.Minute), now.Add(-2*time.Minute)),
@@ -833,7 +837,7 @@ func TestRenderOverviewMixedRepoReplacesSummaryWithRuns(t *testing.T) {
 	act := activityBlock(t, dash)
 	assertContains(t, act, "aaaaaaaaaaaa", "RUNNING", "rev 4", "02:00",
 		"bbbbbbbbbbbb", "DECISION", "rev 6", "-")
-	for _, leaked := range []string{"LIVE", "vas.sentinel", "worktrees"} {
+	for _, leaked := range []string{"LIVE", "vcsentinel", "worktrees"} {
 		if strings.Contains(act, leaked) {
 			t.Errorf("runs must replace the summary row; ACTIVITY leaked %q:\n%s", leaked, act)
 		}

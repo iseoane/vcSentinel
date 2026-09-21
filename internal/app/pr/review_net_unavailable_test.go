@@ -199,7 +199,7 @@ func TestPrReviewConsoleNamesInvocationWhenNetCauseUnrecorded(t *testing.T) {
 	if !strings.Contains(console, "inv-unrecorded-7") {
 		t.Errorf("console does not name the invocation id:\n%s", console)
 	}
-	if !strings.Contains(console, "sentinel runs logs") {
+	if !strings.Contains(console, "vcsentinel runs logs") {
 		t.Errorf("console does not name the manual command that reads the invocation:\n%s", console)
 	}
 }

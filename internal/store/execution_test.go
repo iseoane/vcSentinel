@@ -203,7 +203,7 @@ func TestExecutionDirRejectsUnsafeRunIDs(t *testing.T) {
 func TestCreateRunUsesLinkedWorktreeCommonDir(t *testing.T) {
 	principal := t.TempDir()
 	runGit(t, principal, "init", "-q")
-	runGit(t, principal, "config", "user.email", "test@vas.sentinel")
+	runGit(t, principal, "config", "user.email", "test@vcsentinel")
 	runGit(t, principal, "config", "user.name", "vcsentinel-test")
 	if err := os.WriteFile(filepath.Join(principal, "tracked.txt"), []byte("tracked"), 0600); err != nil {
 		t.Fatal(err)

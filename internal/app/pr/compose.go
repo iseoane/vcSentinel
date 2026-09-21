@@ -42,7 +42,7 @@ func DefaultCIOutcome() CIOutcome {
 	return CIOutcome{
 		Status:  "not_observed",
 		Icon:    "⚪",
-		Summary: "not observed by Sentinel",
+		Summary: "not observed by vcSentinel",
 	}
 }
 

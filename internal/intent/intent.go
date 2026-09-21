@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	IntentKey          = "Sentinel-Intent"
-	SourceKey          = "Sentinel-Intent-Source"
+	IntentKey          = "vcSentinel-Intent"
+	SourceKey          = "vcSentinel-Intent-Source"
 	MaxLength          = 300
 	SourceDeclared     = "declared"
 	SourceConversation = "conversation"
@@ -28,7 +28,7 @@ type Intent struct {
 	Source Source
 }
 
-var ErrInvalid = errors.New("invalid sentinel intent")
+var ErrInvalid = errors.New("invalid vcSentinel intent")
 
 // Normalize folds whitespace and validates the source. A declared intent is
 // rejected when it exceeds MaxLength; a conversation summary is truncated at

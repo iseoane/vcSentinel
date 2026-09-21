@@ -16,7 +16,7 @@ const realGateFailure = "run restricted reviewer timed out after 10m0s: signal: 
 	"\x1b[0m→ \x1b[0mRead internal/review/engine.go\x1b[90m [offset=1, limit=1040]\x1b[0m\n" +
 	"\x1b[0m✗ \x1b[0mGrep \"FinalizeMetrics|ReviewEvidence\" failed\x1b[90m in internal/review/engine.go\x1b[0m\n" +
 	"\x1b[91m\x1b[1mError: \x1b[0mripgrep execution failed\n" +
-	"\x1b[0m✗ \x1b[0mGlob \"cmd/sentinel/autoria.go\" failed\x1b[90m in .\x1b[0m\n" +
+	"\x1b[0m✗ \x1b[0mGlob \"cmd/vcsentinel/autoria.go\" failed\x1b[90m in .\x1b[0m\n" +
 	"\x1b[91m\x1b[1mError: \x1b[0mripgrep execution failed\n"
 
 func TestProviderExecutionFailureLeadsWithTheProviderCause(t *testing.T) {

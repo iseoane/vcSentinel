@@ -146,7 +146,7 @@ type DurableTransportOption func(*DurableTransport)
 // output evidence before admitting a completion. Enabled by default; passing
 // false restores the pre-R6 lenient mode where output is returned with zero
 // Evidence exactly as before admission existed, while every run stays
-// inspectable through `sentinel runs`.
+// inspectable through `vcsentinel runs`.
 func WithEvidenceAdmission(enabled bool) DurableTransportOption {
 	return func(t *DurableTransport) { t.admissionEnabled = enabled }
 }
@@ -240,7 +240,7 @@ var invocationSequence atomic.Uint64
 // With WithEvidenceAdmission(false) both verifications are skipped entirely:
 // Run restores the pre-R6 observe-but-admit lenient behavior and returns the
 // output with zero Evidence, byte-compatible with the transport as it existed
-// before ticket 07. Every run stays inspectable through `sentinel runs`.
+// before ticket 07. Every run stays inspectable through `vcsentinel runs`.
 func (t *DurableTransport) Run(reviewer RestrictedReviewer, identityKey, prompt string) (string, Evidence, error) {
 	return t.run(reviewer, identityKey, prompt, nil)
 }
@@ -285,7 +285,7 @@ func (t *DurableTransport) run(reviewer any, identityKey, prompt string, policy 
 	// blocking observer can never prevent the provider from executing.
 	// Enrich the stored operation label with the per-dimension identity
 	// now that it is known. Admission-time policy is generic "review", but
-	// the TUI and `sentinel runs` surfaces want "review logic" etc. This
+	// the TUI and `vcsentinel runs` surfaces want "review logic" etc. This
 	// best-effort update keeps the persisted bytes compatible (additive).
 	if t.policy.Operation == "review" && identityKey != "" {
 		if dim := identityKey[strings.LastIndex(identityKey, "/")+1:]; dim != "" && dim != "review" {

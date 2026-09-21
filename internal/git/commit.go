@@ -328,7 +328,7 @@ func RequireUsableRepository(worktree string) error {
 //
 // This is not theoretical caution: GIT_DIR TAKES PRIORITY OVER "-C". With
 // GIT_DIR pointing elsewhere, `git -C <path> rev-parse --git-dir` answers
-// for GIT_DIR's repository, not for the path's. Sentinel runs inside its
+// for GIT_DIR's repository, not for the path's. vcSentinel runs inside its
 // own pre-commit hook, which is exactly a context where Git exports those
 // variables, so a query that decides deletions cannot trust "-C" without
 // cleaning them.

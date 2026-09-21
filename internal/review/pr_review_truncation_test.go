@@ -9,7 +9,7 @@ func bulkSteps() []pipelineStep {
 	return []pipelineStep{
 		{Icon: "✅", Step: "review", Summary: "reviewed", Evidence: strings.Repeat("review evidence ", 300)},
 		{Icon: "✅", Step: "test", Summary: "tested", Evidence: strings.Repeat("test evidence ", 300)},
-		{Icon: "⚪", Step: "ci", Summary: "not observed by Sentinel", Evidence: "CI placeholder", CI: true},
+		{Icon: "⚪", Step: "ci", Summary: "not observed by vcSentinel", Evidence: "CI placeholder", CI: true},
 	}
 }
 

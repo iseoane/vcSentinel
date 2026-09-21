@@ -62,7 +62,7 @@ func escalationTransition(frame EventFrame) bool {
 //     escalation frame — the writer crashed after flushing the frame bytes
 //     but before its newline — derives the same honest view from it.
 //   - Every other incomplete final tail keeps failing closed with
-//     IncompleteEventTailError; repairing those bytes remains `sentinel runs
+//     IncompleteEventTailError; repairing those bytes remains `vcsentinel runs
 //     recover`'s job.
 //
 // The underlying files are never written by this call: old readers keep

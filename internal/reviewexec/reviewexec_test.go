@@ -25,7 +25,7 @@ type scriptedReviewer struct {
 }
 
 // ReviewerName reports which concrete layer answered, mirroring how
-// cmd/sentinel's effective-agent recorder identifies the real responder.
+// cmd/vcsentinel's effective-agent recorder identifies the real responder.
 func (r *scriptedReviewer) ReviewerName() string { return r.name }
 
 func (r *scriptedReviewer) RunReview(prompt, sha string, paths []string) (string, error) {
@@ -44,7 +44,7 @@ func (r *scriptedReviewer) callCount() int {
 	return r.calls
 }
 
-// observedReviewer mirrors cmd/sentinel's effective-agent wrapper (H4): it
+// observedReviewer mirrors cmd/vcsentinel's effective-agent wrapper (H4): it
 // records authorship only after the wrapped reviewer answers without error,
 // and captures WHICH layer answered, not merely that something did. The test
 // proves attribution survives routing through the durable controller.

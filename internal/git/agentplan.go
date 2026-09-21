@@ -53,7 +53,7 @@ type SerializedBatch struct {
 	IsOversized bool             `json:"is_oversized"`
 }
 
-// SerializedPlan is the full plan emitted by `sentinel slice plan`. It
+// SerializedPlan is the full plan emitted by `vcsentinel slice plan`. It
 // commits nothing and is idempotent: over the same tree it produces the same
 // PlanID and the same WorktreeState.
 type SerializedPlan struct {

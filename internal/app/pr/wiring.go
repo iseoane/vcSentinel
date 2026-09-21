@@ -1,11 +1,11 @@
-// Package pr hosts the orchestration of the `sentinel pr review` and
-// `sentinel pr create` subcommands. It was moved verbatim from
-// cmd/sentinel/comandos_pr.go (FU-2/C6, one-subcommand split): cmd/sentinel
+// Package pr hosts the orchestration of the `vcsentinel pr review` and
+// `vcsentinel pr create` subcommands. It was moved verbatim from
+// cmd/vcsentinel/comandos_pr.go (FU-2/C6, one-subcommand split): cmd/vcsentinel
 // keeps the package-main names the tests drive, the thin dispatch wrappers
 // and the production wiring; this package owns the flows themselves.
 //
 // Movement hazard cleared: the 21 live block records cite snapshot.go,
-// comandos_runs.go and siblings — none cites cmd/sentinel/comandos_pr.go —
+// comandos_runs.go and siblings — none cites cmd/vcsentinel/comandos_pr.go —
 // and there are no standing dispositions (no dispositions.jsonl), so moving
 // that file orphans nothing.
 //
@@ -27,7 +27,7 @@ import (
 )
 
 // Wiring carries the production collaborators that remain in package main
-// because the review and gate commands share them. cmd/sentinel stays the
+// because the review and gate commands share them. cmd/vcsentinel stays the
 // wiring owner: it builds one Wiring per invocation and hands it to the flows
 // below, so this package never reaches back into package main.
 type Wiring struct {

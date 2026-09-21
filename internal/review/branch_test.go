@@ -143,8 +143,8 @@ func prepareBranchRepo(t *testing.T) string {
 
 	for _, args := range [][]string{
 		{"init", "-b", "main"},
-		{"config", "user.email", "test@vas.sentinel"},
-		{"config", "user.name", "VAS Sentinel Test"},
+		{"config", "user.email", "test@vcsentinel"},
+		{"config", "user.name", "vcSentinel Test"},
 		{"config", "core.hooksPath", ""},
 	} {
 		runGit(t, args...)
@@ -541,7 +541,7 @@ func TestAnalyzeBranchOnlyPending(t *testing.T) {
 }
 
 // TestAnalyzeBranchOnlyPendingReportsSubject: OnlyPending must not just list
-// SHAs — a human deciding whether to run `sentinel review <sha>` needs the
+// SHAs — a human deciding whether to run `vcsentinel review <sha>` needs the
 // commit's subject too, exactly like the audited matrix does (item 2 of
 // docs/issues/actionable.md: the PR must report the gap, not hide it behind
 // a bare SHA).

@@ -26,7 +26,7 @@ import (
 // stream, observed model, stop reason, usage, enforcement declaration)
 // through Run.
 // RunPrompt and RunReview keep their Spanish names by
-// INTERFACE-CONFORMANCE EXCEPTION: cmd/sentinel and the review engine assert
+// INTERFACE-CONFORMANCE EXCEPTION: cmd/vcsentinel and the review engine assert
 // these exact method names structurally (legacy AuditorAgente contract).
 // AGENTS.md's English rule governs new vocabulary; these identifiers are a
 // legacy protocol this adapter must speak to be substitutable.

@@ -11,12 +11,12 @@ func TestBuildSemanticSlicePlanKeepsDirectDependenciesTogether(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeSemanticFile(t, "internal/git/staged.go", "package git\nfunc MeasureStagedVolume() {}\n")
 	writeSemanticFile(t, "internal/git/staged_test.go", "package git\nfunc TestStaged() { MeasureStagedVolume() }\n")
-	writeSemanticFile(t, "cmd/sentinel/staged_check.go", "package main\nimport git \"github.com/ISeoane-Quental/vcSentinel/internal/git\"\nfunc check() { git.MeasureStagedVolume() }\n")
-	writeSemanticFile(t, "cmd/sentinel/staged_check_test.go", "package main\nfunc TestCheck() { check() }\n")
+	writeSemanticFile(t, "cmd/vcsentinel/staged_check.go", "package main\nimport git \"github.com/ISeoane-Quental/vcSentinel/internal/git\"\nfunc check() { git.MeasureStagedVolume() }\n")
+	writeSemanticFile(t, "cmd/vcsentinel/staged_check_test.go", "package main\nfunc TestCheck() { check() }\n")
 
 	changes := []PlannedChange{
-		semanticFileChange("cmd/sentinel/staged_check.go", 30),
-		semanticFileChange("cmd/sentinel/staged_check_test.go", 30),
+		semanticFileChange("cmd/vcsentinel/staged_check.go", 30),
+		semanticFileChange("cmd/vcsentinel/staged_check_test.go", 30),
 		semanticFileChange("internal/git/staged.go", 30),
 		semanticFileChange("internal/git/staged_test.go", 30),
 	}
@@ -28,7 +28,7 @@ func TestBuildSemanticSlicePlanKeepsDirectDependenciesTogether(t *testing.T) {
 		t.Fatalf("semantic dependency unit was split: %+v", plan.Batches)
 	}
 	paths := plan.Batches[0].Paths
-	if indexOfPath(paths, "internal/git/staged.go") > indexOfPath(paths, "cmd/sentinel/staged_check.go") {
+	if indexOfPath(paths, "internal/git/staged.go") > indexOfPath(paths, "cmd/vcsentinel/staged_check.go") {
 		t.Fatalf("dependency was ordered after its consumer: %v", paths)
 	}
 	if len(plan.Batches[0].Selectors) != 4 {

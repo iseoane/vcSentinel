@@ -96,8 +96,8 @@ type FindingsAggregate struct {
 // Only review.StatusReopened resolves the attribute today. Refutation uses the
 // wider known-status basis because review.StatusRefuted has a writer, so a
 // confirmed status is real evidence that the finding was examined and not
-// refuted; review.StatusReopened is written by `sentinel reopen`
-// (cmd/sentinel/reopen.go, FU-6 unit B), so a confirmed status says nothing
+// refuted; review.StatusReopened is written by `vcsentinel reopen`
+// (cmd/vcsentinel/reopen.go, FU-6 unit B), so a confirmed status says nothing
 // about whether that finding was reopened. Every store production without a
 // reopened observation therefore resolves nothing and reports an unknown
 // count. A producer that records a negative reopen answer increments

@@ -36,7 +36,7 @@ func (s *Store) ReadFinding(fingerprint string) (*review.Finding, error) {
 // review.Finding, so the top-level invocation_id it decodes IS
 // Finding.InvocationID — including the admitted refuter identity stamped on
 // refutation-downgraded findings — which keeps this surface symmetric with
-// the ledger record scan in cmd/sentinel's collectProvenanceReferences.
+// the ledger record scan in cmd/vcsentinel's collectProvenanceReferences.
 // Retention callers feed this set into PruneExecutions so a stream cited by
 // any finding is kept. A findings file that fails to decode fails closed:
 // retention decisions must never run while evidence is unreadable.

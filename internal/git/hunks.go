@@ -42,7 +42,7 @@ func TouchedRanges(before, after string) ([]LineRange, error) {
 
 // writeTempDiffFile writes content to a fresh temp file and returns its path.
 func writeTempDiffFile(content string) (string, error) {
-	f, err := os.CreateTemp("", "sentinel-diffguard-*")
+	f, err := os.CreateTemp("", "vcsentinel-diffguard-*")
 	if err != nil {
 		return "", fmt.Errorf("git: could not create a temp file for the diff: %w", err)
 	}

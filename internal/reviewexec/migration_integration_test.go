@@ -27,7 +27,7 @@ func migrationBundles() []review.ReviewBundle {
 	}
 }
 
-// durableTestTransport mirrors the production cmd/sentinel wiring shape: real
+// durableTestTransport mirrors the production cmd/vcsentinel wiring shape: real
 // store, policy, SHA binding, restricted-capability assertion.
 func durableTestTransport(t *testing.T, sha string) review.ReviewTransport {
 	t.Helper()
@@ -158,7 +158,7 @@ func (b *barrierAgent) ReviewWithPolicy(prompt, sha string, paths []string, _ re
 
 func (b *barrierAgent) observedPeak() int32 { return atomic.LoadInt32(&b.peak) }
 
-// observerAgent mirrors cmd/sentinel's effective-agent wrapper (H4): it
+// observerAgent mirrors cmd/vcsentinel's effective-agent wrapper (H4): it
 // records authorship only after the wrapped agent answers without error.
 type observerAgent struct {
 	inner     RestrictedReviewer

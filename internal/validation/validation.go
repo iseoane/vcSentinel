@@ -249,7 +249,7 @@ func delegateWithoutCapabilities(opts RunOptions) ([]ValidationRun, error) {
 // delegationPrompt is the same tested contract as internal/ops.Verificar:
 // free shell, one final "tested: <command>; ..." line, or unavailable.
 func delegationPrompt() string {
-	return "You are the validation step of VAS Sentinel.\n" +
+	return "You are the validation step of vcSentinel.\n" +
 		"You have a free shell: discover the project's tests (Makefile, go.mod, scripts, language conventions) and run them.\n" +
 		"Return ONLY one final line with the tested contract, with the executed commands separated by ;:\n" +
 		"tested: <command>; <command>\n" +

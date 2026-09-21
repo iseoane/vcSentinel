@@ -8,7 +8,7 @@ import (
 )
 
 // SecretFindingsFactory scans every audited branch commit for exposed
-// credentials (FU-11 residual) and prints the same advisory lines sentinel
+// credentials (FU-11 residual) and prints the same advisory lines vcsentinel
 // review prints. Findings ride the per-commit deterministic channel of
 // review.BranchOptions: WARNING, dimensionless, voteless, empty evidence.
 // The wording is identical because the strings come from the shared

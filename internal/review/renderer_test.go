@@ -220,7 +220,7 @@ func TestRenderUnauditedNoticeListsShaSubjectAndCommand(t *testing.T) {
 	out := RenderUnauditedNotice(pending)
 	for _, want := range []string{
 		"2 commit", "aaaaaaa", "feat(x): add x", "bbbbbbb", "fix(y): fix y",
-		"sentinel review aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"vcsentinel review aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("RenderUnauditedNotice missing %q:\n%s", want, out)
@@ -1095,7 +1095,7 @@ func TestRenderBranchPRTemplateReportsUnauditedCommits(t *testing.T) {
 		Net:       &NetReview{Audit: AuditResult{Verdict: VerdictOK}},
 	}
 	body := RenderBranchPRTemplate(res, TemplateVerification{Mode: "omitido"}, "0.2.0", nil)
-	for _, want := range []string{"no review record", "cafe123", "feat(x): x", "sentinel review cafe1234cafe1234cafe1234cafe1234cafe1234"} {
+	for _, want := range []string{"no review record", "cafe123", "feat(x): x", "vcsentinel review cafe1234cafe1234cafe1234cafe1234cafe1234"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("PR body missing %q:\n%s", want, body)
 		}

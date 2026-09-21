@@ -1,7 +1,7 @@
 // Facade pins for the real durable gate orchestration. This file owns the
 // byte-level facade contract: the exact State/Messages shapes per terminal
 // class. The CLI contract (stdout text, exit codes) is produced from Result
-// State/Messages by cmd/sentinel, so these tests pin the facade at its source.
+// State/Messages by cmd/vcsentinel, so these tests pin the facade at its source.
 //
 // Piece 3 of docs/design/review-flow-ownership.md removed the semantic phase,
 // and with it the review-block and refuted-CRITICAL rows this table used to

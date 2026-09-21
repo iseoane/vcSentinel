@@ -12,7 +12,7 @@ import (
 
 // Retention and purge policy for durable execution records (ticket 12,
 // slice 3). Nothing in the store ever purges automatically: pruning is an
-// explicit operator action driven by `sentinel runs prune --older-than`.
+// explicit operator action driven by `vcsentinel runs prune --older-than`.
 //
 // A run is PRUNABLE only when every guard holds:
 //   - its admission record exists and decodes (a partial or corrupt record

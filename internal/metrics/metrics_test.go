@@ -838,7 +838,7 @@ func TestOverrideCoverageSpansTheWholeEffectivePopulation(t *testing.T) {
 // TestReopenCoverageTracksObservedReopenEvidence pins the basis for the reopen
 // attribute. Unlike refutation, where review.StatusRefuted has writers and so
 // any known status is evidence either way, review.StatusReopened is written
-// only by `sentinel reopen` (FU-6 unit B) and a confirmed or refuted status
+// only by `vcsentinel reopen` (FU-6 unit B) and a confirmed or refuted status
 // therefore says nothing about whether the finding was reopened. Only an
 // observation carrying StatusReopened resolves the attribute, so it alone is
 // the coverage basis.
@@ -878,7 +878,7 @@ func TestReopenCoverageTracksObservedReopenEvidence(t *testing.T) {
 // TestReopenCoverageIsEmptyWithoutReopenedObservations pins what an aggregate
 // does when nothing resolves the reopen attribute, which is the shape of a
 // store with no reopened observation. It does NOT verify FU-6 unit B's writer
-// claim (`sentinel reopen` writes review.StatusReopened): that is a static
+// claim (`vcsentinel reopen` writes review.StatusReopened): that is a static
 // property of the source, not something an in-memory Input can detect, and
 // it is documented where it is checkable, on FindingsAggregate.ReopenCoverage.
 func TestReopenCoverageIsEmptyWithoutReopenedObservations(t *testing.T) {

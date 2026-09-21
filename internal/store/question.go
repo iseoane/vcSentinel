@@ -43,17 +43,17 @@ func answerKey(blob, questionID string) string {
 //
 // decisions.jsonl is an UNAUTHENTICATED LOCAL record (same 0644 mode as
 // the rest of the store) and Actor is self-declared attribution (see
-// resolveActor in cmd/sentinel): anyone with write permission on the
+// resolveActor in cmd/vcsentinel): anyone with write permission on the
 // repository can seed a question_answered line in advance and suppress a
 // real question. Acceptable today because nothing reads it yet (see the
 // next paragraph); before wiring this into a real interactive flow, check
 // whether that property suffices or whether the answer needs something
 // stronger than "it is in the file".
 //
-// Deliberately NOT wired yet into cmd/sentinel/review, gate or pr review:
+// Deliberately NOT wired yet into cmd/vcsentinel/review, gate or pr review:
 // today there is no interactive question loop in the CLI
 // (internal/review/engine.go fills AuditResult.Questions, but no command
-// of cmd/sentinel reads or prints it; --answer is just an extra round
+// of cmd/vcsentinel reads or prints it; --answer is just an extra round
 // inside the same process, not something the CLI triggers upon detecting a
 // pending question across separate invocations). This function is the
 // persistence primitive ready to be wired when that interactive surface

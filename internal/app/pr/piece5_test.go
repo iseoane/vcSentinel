@@ -54,7 +54,7 @@ func piece5Entry(t *testing.T, verdict string) store.PRReviewEntry {
 		"<details><summary>⚪ <b>test</b> — not configured</summary>\n\n</details>\n\n" +
 		"<details><summary>⚪ <b>build</b> — not configured</summary>\n\n</details>\n\n" +
 		"<details><summary>✅ <b>pr review</b> — body authored</summary>\n\n</details>\n\n" +
-		"<details><summary>⚪ <b>ci</b> — not observed by Sentinel</summary>\n\n</details>\n\n"
+		"<details><summary>⚪ <b>ci</b> — not observed by vcSentinel</summary>\n\n</details>\n\n"
 	return store.PRReviewEntry{Branch: attestation.Branch, HeadSHA: piece5Head, Title: "Keep: title / unchanged", Verdict: verdict, Body: body, Attestation: raw, Evidence: []string{".vcsentinel/evidence/feature-piece5-abc/pr-review.log"}, At: time.Time{}}
 }
 
@@ -83,7 +83,7 @@ func TestComposePRBodyPreservesNonCIPayload(t *testing.T) {
 	if !strings.Contains(got, "## Risk Assessment\nblock\n") {
 		t.Fatal("semantic block was not preserved")
 	}
-	if strings.Replace(got, "not observed by Sentinel", "verify.yml succeeded", 1) == oldBody {
+	if strings.Replace(got, "not observed by vcSentinel", "verify.yml succeeded", 1) == oldBody {
 		t.Fatal("composition did not change the CI block")
 	}
 	oldAtt, _ := review.ParseAttestation(oldBody)

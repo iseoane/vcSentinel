@@ -35,7 +35,7 @@ func TestRetryRelaunchesFailedRunUnderFreshInvocationIdentity(t *testing.T) {
 
 	// A brand-new controller over the same store performs the operator's
 	// retry decision with its own serving adapter, exactly as
-	// `sentinel runs retry` does after a restart.
+	// `vcsentinel runs retry` does after a restart.
 	successController := execution.NewControllerWithClock(backing, successOutputAdapter("resumed output"), fixedClock())
 	handle, err := successController.Retry(context.Background(), runID, 0)
 	if err != nil {
@@ -156,8 +156,8 @@ func TestFallbackChainPrimaryFailsSecondaryServesWithEffectiveAgent(t *testing.T
 	requireNonWindows(t)
 
 	binDir := t.TempDir()
-	writeFakeAgent(t, binDir, "vas-e2e-primary-agent", "exit 7\n")
-	writeFakeAgent(t, binDir, "vas-e2e-secondary-agent", "echo 'secondary review output'\n")
+	writeFakeAgent(t, binDir, "vcsentinel-e2e-primary-agent", "exit 7\n")
+	writeFakeAgent(t, binDir, "vcsentinel-e2e-secondary-agent", "echo 'secondary review output'\n")
 
 	home := t.TempDir()
 	t.Setenv("MY_SUB_AGENT", "")
@@ -173,10 +173,10 @@ func TestFallbackChainPrimaryFailsSecondaryServesWithEffectiveAgent(t *testing.T
 	configYAML := "version: \"2\"\n" +
 		"active_agent: auto\n" +
 		"agents:\n" +
-		"  vas-e2e-primary-agent:\n" +
+		"  vcsentinel-e2e-primary-agent:\n" +
 		"    model: fake-primary-model\n" +
 		"    reasoning_effort: low\n" +
-		"  vas-e2e-secondary-agent:\n" +
+		"  vcsentinel-e2e-secondary-agent:\n" +
 		"    model: fake-secondary-model\n" +
 		"    reasoning_effort: high\n"
 	if err := os.WriteFile(filepath.Join(configDir, "vcsentinel.yml"), []byte(configYAML), 0o644); err != nil {
@@ -215,7 +215,7 @@ func TestFallbackChainPrimaryFailsSecondaryServesWithEffectiveAgent(t *testing.T
 	if !ok {
 		t.Fatal("the chain recorded no effective agent despite answering")
 	}
-	if filepath.Base(effective.Binary) != "vas-e2e-secondary-agent" ||
+	if filepath.Base(effective.Binary) != "vcsentinel-e2e-secondary-agent" ||
 		effective.Model != "fake-secondary-model" || effective.Effort != "high" {
 		t.Fatalf("effective agent = %+v, want the secondary's binary/model/effort", effective)
 	}

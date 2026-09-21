@@ -1,5 +1,5 @@
 // Command fu10divergence measures what feeding the review planner the same
-// change evidence as `sentinel explain` would cost, so ticket 03 of the FU-10
+// change evidence as `vcsentinel explain` would cost, so ticket 03 of the FU-10
 // sequence decides from a number rather than a preference.
 //
 // Both arms share one change profile per commit. Only the detector input

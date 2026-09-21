@@ -13,13 +13,13 @@ import (
 
 // TestDaemonHelperProcess is never executed as a test by the parent suite:
 // it is the body of the re-executed test binary used as a child process by
-// the lifecycle tests. Without VAS_DAEMON_HELPER=1 in the environment it
+// the lifecycle tests. Without VCSENTINEL_DAEMON_HELPER=1 in the environment it
 // skips immediately, which makes it a deterministic short-lived child; with
 // the variable set it blocks forever until the parent kills it, which makes
 // it a deterministic long-lived child. Both roles run on every platform Go
 // supports, so no shell builtins like `sleep` are needed.
 func TestDaemonHelperProcess(t *testing.T) {
-	if os.Getenv("VAS_DAEMON_HELPER") != "1" {
+	if os.Getenv("VCSENTINEL_DAEMON_HELPER") != "1" {
 		t.Skip("daemon helper process scaffold")
 	}
 	<-make(chan struct{}) // Blocked until the parent terminates us.
@@ -52,7 +52,7 @@ func spawnShortLivedChild(t *testing.T) int {
 func spawnLongLivedChild(t *testing.T) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestDaemonHelperProcess$")
-	cmd.Env = append(os.Environ(), "VAS_DAEMON_HELPER=1")
+	cmd.Env = append(os.Environ(), "VCSENTINEL_DAEMON_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start long-lived child: %v", err)
 	}

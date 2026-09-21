@@ -2,7 +2,7 @@ package review
 
 // ResolveBlob resolves the content-blob hash of a file, used to identify a
 // question's subject across commits (e.g. after a rebase that keeps content
-// identical). Injected by the caller (cmd/sentinel) because internal/review
+// identical). Injected by the caller (cmd/vcsentinel) because internal/review
 // cannot import internal/git or internal/store without creating an import
 // cycle (internal/store already imports internal/review for Finding).
 type ResolveBlob func(file string) (string, error)

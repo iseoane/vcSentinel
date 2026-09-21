@@ -1994,7 +1994,7 @@ func TestRefutationWithoutDurableIdentityKeepsTheBlocker(t *testing.T) {
 // TestPlanForProfileSchedulesSecurityForCredentialHandling is the structural
 // hole FU-10 records, and the reverse of the case that exposed it. A source
 // change that adds credential handling without touching an exported symbol is
-// security_sensitive to `sentinel explain` and, before this change, invisible
+// security_sensitive to `vcsentinel explain` and, before this change, invisible
 // to the review planner: the planner received only symbols and paths, so the
 // three detectors that read added lines could never report present and no
 // security dimension was ever scheduled for it.

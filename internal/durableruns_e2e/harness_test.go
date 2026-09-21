@@ -1,7 +1,7 @@
 // Package durableruns_e2e proves the durable-run lifecycle end to end: a real
 // store plus controller (plus the transport seam where relevant) on temporary
 // repositories, one test per scenario, asserting honest terminal states and
-// `sentinel runs`-style inspectability. Nothing here fabricates completions:
+// `vcsentinel runs`-style inspectability. Nothing here fabricates completions:
 // every assertion reads back through the same durable evidence an operator
 // would see after a restart.
 package durableruns_e2e
@@ -186,7 +186,7 @@ func waitForProjection(t *testing.T, observer *execution.Controller, runID agent
 	return store.RunProjection{}
 }
 
-// assertRunsInspection is the `sentinel runs`-style consistency proof shared
+// assertRunsInspection is the `vcsentinel runs`-style consistency proof shared
 // by every scenario: the inspected projection state matches the expected
 // terminal (or current) shape, the reconciled read view agrees with it, and
 // the run appears exactly once in the store listing.
@@ -212,7 +212,7 @@ func assertRunsInspection(t *testing.T, backing *store.Store, observer *executio
 	return inspection
 }
 
-// assertSingleRun proves `sentinel runs` sees exactly this run and nothing else.
+// assertSingleRun proves `vcsentinel runs` sees exactly this run and nothing else.
 func assertSingleRun(t *testing.T, backing *store.Store, runID string) {
 	t.Helper()
 	ids, err := backing.ListExecutionIDs()

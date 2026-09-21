@@ -32,7 +32,7 @@ type Decision struct {
 
 // DecisionForceBypass and ScopePrCreate are the exported vocabulary of the
 // --force bypass (M3 report), so that a caller outside this package
-// (cmd/sentinel) does not compose the literals by hand: a typo in a loose
+// (cmd/vcsentinel) does not compose the literals by hand: a typo in a loose
 // literal would produce a row that no reader of decisions.jsonl recognizes,
 // with no compilation error to reveal it.
 const (

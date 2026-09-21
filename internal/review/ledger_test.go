@@ -735,7 +735,7 @@ func TestListRecordsFailsOnADanglingLedgerSymlink(t *testing.T) {
 // TestListRecordsTreatsAMissingLedgerDirectoryAsEmpty holds the other side of
 // FU-16 down. NewLedger does not create the directory — the first saved
 // revision does — so its absence is a real answer and not a failure. A fix that
-// propagated every ReadDir error would break `sentinel status`, the metrics
+// propagated every ReadDir error would break `vcsentinel status`, the metrics
 // reader and the prune's own provenance scan on any repository that never saved
 // a review.
 func TestListRecordsTreatsAMissingLedgerDirectoryAsEmpty(t *testing.T) {
@@ -858,7 +858,7 @@ const (
 // TestSaveRevisionAcrossProcesses proves what the goroutine test cannot: the
 // serialization holds between separate PROCESSES. That is the real shape of the
 // contract, because the shared ledger exists so that two checkouts — two
-// `sentinel review` invocations — write into one record. A mutex inside one
+// `vcsentinel review` invocations — write into one record. A mutex inside one
 // process would keep the goroutine test green while every cross-checkout write
 // still overwrote another.
 //

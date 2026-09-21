@@ -178,7 +178,7 @@ func TestApplyApprovedPlanRemovesForgedReservedTrailersWithoutIntent(t *testing.
 	if err := os.WriteFile("app.go", []byte("package app\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	adapter := &adapterPlanFake{message: "subject\n\nbody\n\nExisting: keep\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"}
+	adapter := &adapterPlanFake{message: "subject\n\nbody\n\nExisting: keep\nvcSentinel-Intent: forged\nvcSentinel-Intent-Source: declared"}
 	plan, err := BuildPlanForAgentWithAdapter(adapter)
 	if err != nil {
 		t.Fatalf("BuildPlanForAgentWithAdapter() error: %v", err)

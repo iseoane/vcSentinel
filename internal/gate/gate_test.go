@@ -99,7 +99,7 @@ func baseOptions(t *testing.T, cfg config.Config, run validation.CommandRunner) 
 	// Ticket 13 (R11): RunGate IS the durable orchestration, so every
 	// fixture exercises the only execution path with its full seam set:
 	// stage/candidate identity, a temp-dir backed durable store, and a REAL
-	// transport factory mirroring cmd/sentinel's construction. Tests that
+	// transport factory mirroring cmd/vcsentinel's construction. Tests that
 	// need their own counter or transport override these fields afterwards.
 	opts.Stage = "pre-push"
 	opts.CandidateSHA = "0123456789abcdef"

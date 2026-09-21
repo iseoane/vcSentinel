@@ -95,7 +95,7 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 		{claim: "UTF-8 rune truncation is broken", file: "internal/review/renderer.go", requirements: []string{"func recortarRunas", "utf8.RuneStart", "conservado := recortarRunas"}},
 		{claim: "maxBytes <= 0 truncates unexpectedly", file: "internal/review/renderer.go", requirements: []string{"if maxBytes <= 0 || len(texto) <= maxBytes"}},
 		{claim: "maxBytes <= 0 has no test coverage", file: "internal/review/renderer_test.go", requirements: []string{"func TestTruncarCuerpoLimiteNulo", "TruncarCuerpo(texto, 0)", "TruncarCuerpo(texto, -5)"}},
-		{claim: "exitCodeDeError does not exist", file: "cmd/sentinel/comandos_estado.go", requirements: []string{"func exitCodeDeError(err error) int", "errors.As(err, &exitErr)"}},
+		{claim: "exitCodeDeError does not exist", file: "cmd/vcsentinel/comandos_estado.go", requirements: []string{"func exitCodeDeError(err error) int", "errors.As(err, &exitErr)"}},
 	}
 	reader := NewSnapshotReader(repo)
 
@@ -123,7 +123,7 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 		SHA:                 auditedSHA,
 		Diff:                rendererDiff + "\n" + exitCodeDiff,
 		Bundles:             []ReviewBundle{{Name: "h5", Dimensions: []string{DimLogic}, Priority: PriorityRequired, Cost: 1}},
-		ContextPaths:        []string{"internal/review/renderer.go", "internal/review/renderer_test.go", "cmd/sentinel/comandos_estado.go"},
+		ContextPaths:        []string{"internal/review/renderer.go", "internal/review/renderer_test.go", "cmd/vcsentinel/comandos_estado.go"},
 		ReadSnapshotContent: reader,
 		RefuterFactory: func() (AgentReviewer, string, error) {
 			return h5Refuter{}, "fixture", nil
@@ -132,7 +132,7 @@ func TestH5HistoricalFalsePositivesUseFinalSnapshotEvidence(t *testing.T) {
 		// transport; this fixture uses the direct-call double with the same
 		// reviewer path allowlist the audit options declare.
 		ReviewTransport: directTransport(auditedSHA,
-			"internal/review/renderer.go", "internal/review/renderer_test.go", "cmd/sentinel/comandos_estado.go"),
+			"internal/review/renderer.go", "internal/review/renderer_test.go", "cmd/vcsentinel/comandos_estado.go"),
 	}
 	factory := func(ReviewBundle, string) (AgentReviewer, string, error) {
 		return h5Reviewer{findings: findings}, "fixture", nil
@@ -194,7 +194,7 @@ func h5FixtureRepository(t *testing.T) (repo, auditedSHA, rendererDiff, exitCode
 	h5Git(t, repo, "config", "user.email", "h5@example.test")
 	h5WriteFile(t, filepath.Join(repo, "internal/review/renderer.go"), "package review\n\nfunc TruncarCuerpo(texto string, maxBytes int) string { return texto }\n")
 	h5WriteFile(t, filepath.Join(repo, "internal/review/renderer_test.go"), "package review\n")
-	h5WriteFile(t, filepath.Join(repo, "cmd/sentinel/comandos_estado.go"), "package main\n")
+	h5WriteFile(t, filepath.Join(repo, "cmd/vcsentinel/comandos_estado.go"), "package main\n")
 	h5Git(t, repo, "add", ".")
 	h5Git(t, repo, "commit", "-m", "test fixture baseline")
 
@@ -237,7 +237,7 @@ func TestTruncarCuerpoLimiteNulo() {
 	rendererSHA := strings.TrimSpace(h5Git(t, repo, "rev-parse", "HEAD"))
 	rendererDiff = h5Git(t, repo, "diff", "--no-ext-diff", rendererSHA+"^", rendererSHA, "--", "internal/review/renderer.go", "internal/review/renderer_test.go")
 
-	h5WriteFile(t, filepath.Join(repo, "cmd/sentinel/comandos_estado.go"), `package main
+	h5WriteFile(t, filepath.Join(repo, "cmd/vcsentinel/comandos_estado.go"), `package main
 
 import (
 	"errors"
@@ -257,10 +257,10 @@ func exitCodeDeError(err error) int {
 	return -1
 }
 `)
-	h5Git(t, repo, "add", "cmd/sentinel/comandos_estado.go")
+	h5Git(t, repo, "add", "cmd/vcsentinel/comandos_estado.go")
 	h5Git(t, repo, "commit", "-m", "historical exit code change")
 	auditedSHA = strings.TrimSpace(h5Git(t, repo, "rev-parse", "HEAD"))
-	exitCodeDiff = h5Git(t, repo, "diff", "--no-ext-diff", auditedSHA+"^", auditedSHA, "--", "cmd/sentinel/comandos_estado.go")
+	exitCodeDiff = h5Git(t, repo, "diff", "--no-ext-diff", auditedSHA+"^", auditedSHA, "--", "cmd/vcsentinel/comandos_estado.go")
 	return repo, auditedSHA, rendererDiff, exitCodeDiff
 }
 

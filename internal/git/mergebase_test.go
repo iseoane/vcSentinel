@@ -20,8 +20,8 @@ func prepareTempRepo(t *testing.T) string {
 
 	for _, cmd := range [][]string{
 		{"init", "-b", "main"},
-		{"config", "user.email", "test@vas.sentinel"},
-		{"config", "user.name", "VAS Sentinel Test"},
+		{"config", "user.email", "test@vcsentinel"},
+		{"config", "user.name", "vcSentinel Test"},
 		// The user's global core.hooksPath installs the volume hook that
 		// would reject the test commits: it is disabled for this temp repo
 		// only.

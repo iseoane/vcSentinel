@@ -313,7 +313,7 @@ func resolvePublicationBase(worktree string, flags FlagsPrCreate, deps DepsPrCre
 	return resolved.PublicationBranch, nil
 }
 
-// verifyRemoteBranch refuses publication when the branch Sentinel pushed no
+// verifyRemoteBranch refuses publication when the branch vcSentinel pushed no
 // longer carries the reviewed head. It applies only to that pushed candidate:
 // the local snapshot cannot see another actor pushing over the branch while CI
 // is observed.

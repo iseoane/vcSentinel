@@ -350,7 +350,7 @@ func BundlesForRisk(result risk.Result, features []change.Feature) []ReviewBundl
 }
 
 // PlanForProfile derives deterministic risk bundles from a complete change
-// profile and the same evidence `sentinel explain` uses. The diff and the
+// profile and the same evidence `vcsentinel explain` uses. The diff and the
 // repository attributes are required rather than optional: supplying only
 // symbols and paths starves the three detectors that read added lines, which is
 // the divergence FU-10 records.

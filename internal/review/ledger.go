@@ -34,7 +34,7 @@ type Revision struct {
 	// Coverage records the coverage this revision actually had: how its
 	// dimension plan was chosen (piece 2, docs/design/review-flow-ownership.md).
 	// A revision whose plan was derived from the change is CoverageAuthoritative;
-	// a revision explicitly narrowed by the operator (sentinel review --dims) is
+	// a revision explicitly narrowed by the operator (vcsentinel review --dims) is
 	// CoverageSupplementary. It is decided at write time by every writer that
 	// persists a revision: derive-from-change ⇒ authoritative, explicit-operator
 	// dims ⇒ supplementary. Absent (legacy, pre-piece-2 records) is classified

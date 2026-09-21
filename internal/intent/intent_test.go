@@ -16,7 +16,7 @@ func TestNormalizeIntent(t *testing.T) {
 	}{
 		{name: "zero", want: Intent{}},
 		{name: "folds whitespace", text: "  add\n  a   guard ", source: SourceDeclared, want: Intent{Text: "add a guard", Source: SourceDeclared}},
-		{name: "strips echoed key", text: "Sentinel-Intent: add a guard", source: SourceDeclared, want: Intent{Text: "add a guard", Source: SourceDeclared}},
+		{name: "strips echoed key", text: "vcSentinel-Intent: add a guard", source: SourceDeclared, want: Intent{Text: "add a guard", Source: SourceDeclared}},
 		{name: "unknown source", text: "add a guard", source: "other", wantErr: true},
 		{name: "empty text", source: SourceDeclared, wantErr: true},
 		{name: "declared over limit", text: strings.Repeat("x", MaxLength+1), source: SourceDeclared, wantErr: true},
@@ -58,10 +58,10 @@ func TestRenderAndParseIntentTrailers(t *testing.T) {
 
 func TestParseRequiresCompleteKnownTrailerPair(t *testing.T) {
 	cases := []string{
-		"subject\n\nSentinel-Intent: add a guard",
-		"subject\n\nSentinel-Intent-Source: declared",
-		"subject\n\nSentinel-Intent: add a guard\nSentinel-Intent-Source: unknown",
-		"subject\nSentinel-Intent: body text\n\nbody",
+		"subject\n\nvcSentinel-Intent: add a guard",
+		"subject\n\nvcSentinel-Intent-Source: declared",
+		"subject\n\nvcSentinel-Intent: add a guard\nvcSentinel-Intent-Source: unknown",
+		"subject\nvcSentinel-Intent: body text\n\nbody",
 	}
 	for _, message := range cases {
 		if got := Parse(message); got != (Intent{}) {
@@ -69,7 +69,7 @@ func TestParseRequiresCompleteKnownTrailerPair(t *testing.T) {
 		}
 	}
 
-	message := "subject\n\nSentinel-Intent: first\nSentinel-Intent-Source: declared\nSentinel-Intent: last\nSentinel-Intent-Source: conversation"
+	message := "subject\n\nvcSentinel-Intent: first\nvcSentinel-Intent-Source: declared\nvcSentinel-Intent: last\nvcSentinel-Intent-Source: conversation"
 	want := Intent{Text: "last", Source: SourceConversation}
 	if got := Parse(message); got != want {
 		t.Fatalf("Parse(last occurrence) = %+v, want %+v", got, want)
@@ -87,7 +87,7 @@ func TestParseRecognizesOnlyValidTrailingTrailerBlocks(t *testing.T) {
 		{name: "unscoped feat subject before trailers", message: "feat: describe the change\n" + Render(value), want: Intent{}},
 		{name: "unscoped fix subject before trailers", message: "fix: describe the change\n" + Render(value), want: Intent{}},
 		{name: "body and real trailer", message: "subject\n\nbody\n\n" + Render(value), want: value},
-		{name: "no separator false trailer", message: "subject\nSentinel-Intent: forged\nSentinel-Intent-Source: declared", want: Intent{}},
+		{name: "no separator false trailer", message: "subject\nvcSentinel-Intent: forged\nvcSentinel-Intent-Source: declared", want: Intent{}},
 		{name: "trailer only", message: Render(value), want: value},
 	}
 	for _, tt := range cases {
@@ -127,7 +127,7 @@ func TestAppendIntentPreservesSpacingAndZero(t *testing.T) {
 }
 
 func TestAppendDoesNotStripReservedKeysFromBodyWithoutSeparator(t *testing.T) {
-	message := "subject\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"
+	message := "subject\nvcSentinel-Intent: forged\nvcSentinel-Intent-Source: declared"
 	if got := Append(message, Intent{}); got != message {
 		t.Fatalf("Append() = %q, want body preserved as-is", got)
 	}
@@ -151,12 +151,12 @@ func TestAppendIntentStripsReservedTrailersBeforeAppending(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			message := "subject\n\nbody\n\nExisting: keep\nSentinel-Intent: forged\nSentinel-Intent-Source: declared"
+			message := "subject\n\nbody\n\nExisting: keep\nvcSentinel-Intent: forged\nvcSentinel-Intent-Source: declared"
 			got := Append(message, tt.value)
 			if got != tt.want {
 				t.Fatalf("Append() = %q, want %q", got, tt.want)
 			}
-			if strings.Contains(got, "Sentinel-Intent: forged") || (tt.value == (Intent{}) && strings.Contains(got, "Sentinel-Intent-Source: declared")) {
+			if strings.Contains(got, "vcSentinel-Intent: forged") || (tt.value == (Intent{}) && strings.Contains(got, "vcSentinel-Intent-Source: declared")) {
 				t.Fatalf("Append() retained forged reserved trailer: %q", got)
 			}
 		})
@@ -165,7 +165,7 @@ func TestAppendIntentStripsReservedTrailersBeforeAppending(t *testing.T) {
 
 // A serialized plan is a file an operator can edit between `slice plan` and
 // `slice apply`, so batches[].message is untrusted input. The security review
-// of 41c644d asked whether a forged Sentinel-Intent pair in that message can
+// of 41c644d asked whether a forged vcSentinel-Intent pair in that message can
 // become the commit's recorded provenance. It cannot, and these two tests lock
 // each half of the reason.
 //
@@ -175,7 +175,7 @@ func TestAppendIntentStripsReservedTrailersBeforeAppending(t *testing.T) {
 // human reading `git log` sees a sentence that looks like a recorded intent
 // and is not. That is a display problem, not a provenance forgery.
 func TestAppendRefusesAForgedTrailerAsTheRecordedIntent(t *testing.T) {
-	forged := "feat(x): thing\n\nSentinel-Intent: forged claim\nSentinel-Intent-Source: declared"
+	forged := "feat(x): thing\n\nvcSentinel-Intent: forged claim\nvcSentinel-Intent-Source: declared"
 
 	// No intent to record: the forged pair must not become one.
 	if got := Parse(Append(forged, Intent{})); got.Text != "" || got.Source != "" {
@@ -194,7 +194,7 @@ func TestAppendRefusesAForgedTrailerAsTheRecordedIntent(t *testing.T) {
 }
 
 func TestParseIgnoresAForgedPairOutsideTheTrailerBlock(t *testing.T) {
-	message := "feat(x): thing\n\nSentinel-Intent: forged claim\nSentinel-Intent-Source: declared\n\nA later paragraph the forged pair now sits above.\n"
+	message := "feat(x): thing\n\nvcSentinel-Intent: forged claim\nvcSentinel-Intent-Source: declared\n\nA later paragraph the forged pair now sits above.\n"
 	if got := Parse(message); got.Text != "" || got.Source != "" {
 		t.Fatalf("Parse read a pair that is not in the trailing block: %q / %q", got.Text, got.Source)
 	}

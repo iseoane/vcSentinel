@@ -17,7 +17,7 @@ import (
 // benchmark. "go test -bench=. -run=^$ ./internal/validation/" prints two
 // comparable ns/op figures, one per sub-benchmark.
 //
-// It runs against the vas.sentinel repository itself (which already has many
+// It runs against the vcSentinel repository itself (which already has many
 // real Go packages), using the real native GraphProvider
 // (graph.NewNativeProvider), not a double: the partial scope comes from
 // resolveCommand with the authorization that this real graph produces for a

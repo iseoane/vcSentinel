@@ -270,7 +270,7 @@ func pipelineSteps(res *BranchResult, intents []IntentLine, verification Templat
 		absentStatus, absentSummary = statusNotAttempted, "not attempted by this command"
 		gateStatus, gateSummary = absentStatus, absentSummary
 	}
-	slice := pipelineStep{Icon: "⚪", Step: "slice", Status: statusNotObserved, Summary: "not observed", Evidence: "No Sentinel-Intent trailers were present."}
+	slice := pipelineStep{Icon: "⚪", Step: "slice", Status: statusNotObserved, Summary: "not observed", Evidence: "No vcSentinel-Intent trailers were present."}
 	if len(intents) > 0 {
 		slice = pipelineStep{Icon: "✅", Step: "slice", Status: statusPassed, Summary: "intent trailers present", Evidence: renderIntentLines(intents, res.SHAs)}
 	}
@@ -286,7 +286,7 @@ func pipelineSteps(res *BranchResult, intents []IntentLine, verification Templat
 		commandPipelineStep("test", verification.Comandos, absentStatus, absentSummary),
 		commandPipelineStep("build", nil, absentStatus, absentSummary),
 		{Icon: "✅", Step: "pr review", Status: statusAuthored, Summary: "body and attestation authored", Evidence: "This persisted entry was authored for the reviewed branch head."},
-		{Icon: "⚪", Step: "ci", Status: statusNotObserved, Summary: "not observed by Sentinel", Evidence: "Filled by pr create when CI evidence is available.", CI: true},
+		{Icon: "⚪", Step: "ci", Status: statusNotObserved, Summary: "not observed by vcSentinel", Evidence: "Filled by pr create when CI evidence is available.", CI: true},
 	}
 }
 

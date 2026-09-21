@@ -276,7 +276,7 @@ func VerifyAdapter(adapter agentadapter.AgentAdapter) bool {
 
 // RunFragmentationPlan commits each approved batch with its pre-approved
 // message, in plan order, and returns a summary per commit created. Every
-// commit skips hook verification (--no-verify): invoking sentinel slice IS
+// commit skips hook verification (--no-verify): invoking vcsentinel slice IS
 // the guardian's unlock, each batch is already validated (≤400 lines
 // except giants with explicit bypass) and the volume hook would also
 // measure the pending changes of the following batches, wrongly rejecting

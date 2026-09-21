@@ -31,7 +31,7 @@ import (
 //     release the owner claim, and print a stopped summary with the orphaned
 //     count the graceful sequence settled.
 //
-// The controller is dependency-injected by the caller (cmd/sentinel builds it
+// The controller is dependency-injected by the caller (cmd/vcsentinel builds it
 // through buildRunsController with the configured prompt adapter), so a real
 // foreground daemon serves OpStart with a fully wired execution path instead
 // of the historical ErrControllerNotReady refusal. Boot reconciliation reads

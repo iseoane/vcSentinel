@@ -14,7 +14,7 @@ import (
 //   - AUTHORITATIVE revision: a run whose dimension plan was derived from the
 //     change (legacy revisions without the coverage field also count).
 //   - SUPPLEMENTARY revision: a run explicitly narrowed by the operator
-//     (sentinel review --dims): recorded and visible, never authoritative,
+//     (vcsentinel review --dims): recorded and visible, never authoritative,
 //     never enough to call a commit reviewed, but its CRITICAL findings still
 //     surface as alarms (owner decision: surface findings, never clear).
 

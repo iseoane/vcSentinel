@@ -109,7 +109,7 @@ func Verify(opts VerifyOptions) (VerificationResult, error) {
 
 // defaultVerificationProfile mirrors the gate's defaultGateProfile. It is
 // duplicated rather than imported because internal/ops must not depend on
-// cmd/sentinel; if the gate's default ever changes, this is the other place
+// cmd/vcsentinel; if the gate's default ever changes, this is the other place
 // that decides which commands a PR claims to have run.
 const defaultVerificationProfile = "standard"
 

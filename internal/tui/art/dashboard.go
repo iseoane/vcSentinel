@@ -47,7 +47,7 @@ type repoRow struct {
 
 var mockRepos = []repoRow{
 	{
-		name: "vas.sentinel", daemon: "managed", kind: stOwn, expanded: true,
+		name: "vcsentinel", daemon: "managed", kind: stOwn, expanded: true,
 		worktrees: []worktreeRow{
 			{name: "main", state: "clean", kind: stOff},
 			{name: "tui-control-center", state: "2 runs", kind: stOK},
@@ -59,11 +59,11 @@ var mockRepos = []repoRow{
 }
 
 var mockLocation = [][2]string{
-	{"Repository", "vas.sentinel"},
-	{"Path", "/home/operator/workspace/vas.sentinel"},
-	{"Worktree", "main · ~/workspace/vas.sentinel"},
+	{"Repository", "vcsentinel"},
+	{"Path", "/home/operator/workspace/vcsentinel"},
+	{"Worktree", "main · ~/workspace/vcsentinel"},
 	{"Branch", "main"},
-	{"Origin", "git@github.com:org/vas.sentinel"},
+	{"Origin", "git@github.com:ISeoane-Quental/vcSentinel"},
 	{"Daemon", "● managed by this session · pid 4321"},
 	{"Status", "clean · 3 worktrees · 3 runs"},
 }
@@ -195,7 +195,7 @@ func renderFrame(p painter, width int, summary []span, tree, right func(int) []s
 
 // headerLine renders the title with the colored daemon summary right-aligned.
 func headerLine(p painter, width int, summary []span) string {
-	title := span{" SENTINEL CONTROL CENTER", Purple}
+	title := span{" VCSENTINEL CONTROL CENTER", Purple}
 	summaryWidth := 0
 	for _, s := range summary {
 		summaryWidth += runeLen(s.text)

@@ -37,8 +37,8 @@ func TestDashboardColoredKeepsRuneContent(t *testing.T) {
 func TestDashboardShowsContractSections(t *testing.T) {
 	dash := DashboardPlain(100)
 	for _, want := range []string{
-		"SENTINEL CONTROL CENTER", "REPOSITORIES", "LOCATION", "ACTIVITY",
-		"vas.sentinel", "tui-control-cent", "Origin", "navigate",
+		"VCSENTINEL CONTROL CENTER", "REPOSITORIES", "LOCATION", "ACTIVITY",
+		"vcsentinel", "tui-control-cent", "Origin", "navigate",
 	} {
 		if !strings.Contains(dash, want) {
 			t.Errorf("dashboard missing contract section %q", want)

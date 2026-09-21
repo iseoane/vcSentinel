@@ -8,7 +8,7 @@ package review
 //
 //   - RULE 1 (the verdict rule): the commit's current VERDICT (its Result) is
 //     the last AUTHORITATIVE revision. A supplementary (operator-narrowed,
-//     sentinel review --dims) run can never set, clear or downgrade it.
+//     vcsentinel review --dims) run can never set, clear or downgrade it.
 //     Consumers of the Result string — status, the commit × dimension matrix,
 //     the summary counts, the branch verdict, the "corrected a previous block"
 //     flag — use LastAuthoritativeRevision.
@@ -38,7 +38,7 @@ const (
 	CoverageAuthoritative RevisionCoverage = "authoritative"
 
 	// CoverageSupplementary marks a run whose dimension plan was explicitly
-	// chosen by the operator (sentinel review --dims). It is recorded and
+	// chosen by the operator (vcsentinel review --dims). It is recorded and
 	// visible, never authoritative, and never enough to call a commit reviewed;
 	// its CRITICAL findings still surface as alarms under CurrentFindings.
 	CoverageSupplementary RevisionCoverage = "supplementary"

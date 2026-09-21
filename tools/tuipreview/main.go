@@ -1,6 +1,6 @@
 // Command tuipreview prints the Control Center visual contract: the
 // dashboard mockups in color, plain, and HTML forms. It exists for human
-// review; it is not wired into the sentinel CLI.
+// review; it is not wired into the vcsentinel CLI.
 package main
 
 import (
