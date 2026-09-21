@@ -39,7 +39,7 @@ func generateAssets() error {
 
 	names := make([]string, 0, len(assets))
 	for _, a := range assets {
-		name := "sentinel-" + a.goos + "-" + a.goarch
+		name := "vcsentinel-" + a.goos + "-" + a.goarch
 		if a.goos == "windows" {
 			name += ".exe"
 		}
@@ -47,7 +47,7 @@ func generateAssets() error {
 	}
 
 	for i, a := range assets {
-		fmt.Printf("🔨 Building sentinel-%s-%s ...\n", a.goos, a.goarch)
+		fmt.Printf("🔨 Building vcsentinel-%s-%s ...\n", a.goos, a.goarch)
 		if err := buildAsset(version, a, names[i]); err != nil {
 			return err
 		}
@@ -152,13 +152,13 @@ func buildAsset(version string, a asset, name string) error {
 	cmd := exec.Command("go", "build",
 		"-ldflags", fmt.Sprintf("-s -w -X main.version=%s", version),
 		"-o", outputPath,
-		"./cmd/sentinel/main.go",
+		"./cmd/vcsentinel/main.go",
 	)
 	cmd.Env = append(os.Environ(), "GOOS="+a.goos, "GOARCH="+a.goarch)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("building sentinel-%s-%s failed: %w\n%s", a.goos, a.goarch, err, output)
+		return fmt.Errorf("building vcsentinel-%s-%s failed: %w\n%s", a.goos, a.goarch, err, output)
 	}
 	return nil
 }
