@@ -18,14 +18,14 @@ Rename the entire product from VAS Sentinel and its technical variants to vcSent
 
 ## Tasks
 
-- [ ] T1 — Rename the Go module, command tree, executable identity, imports, and release/build wiring.
+- [x] T1 — Rename the Go module, command tree, executable identity, imports, and release/build wiring.
   - Route: delegated writer; multi-file write trigger.
-  - Verification: `go test ./cmd/vcsentinel ./tools/release`, `go build ./...`, `go test ./internal/setup`, and scoped `git diff --check` passed; independent verification found and the writer corrected three stale setup expectations.
-  - Evidence: implementation verified; commit pending.
+  - Verification: `go test ./cmd/vcsentinel ./tools/release`, `go build ./...`, `go test ./internal/setup`, focused `internal/git` tests, and scoped `git diff --check` passed; independent verification found and the writer corrected stale setup expectations and recovery guidance.
+  - Evidence: slice commit range `61979cb..e554288` (nine guardian-created commits; core semantic unit `b1aef16`).
 - [ ] T2 — Rename configuration, environment variables, persistent storage, daemon/runtime paths, markers, hooks, and setup behavior with a clean cut.
   - Route: delegated writer; multi-file write trigger.
-  - Verification: focused config, setup, store, daemon, review, and runtime tests.
-  - Evidence: pending.
+  - Verification: focused config/setup/store/daemon/ops/graph/reviewsnapshot/CLI tests, `go test ./...`, `go build ./...`, `go vet ./...`, `git diff --check`, fixture checks, and independent residual audit passed.
+  - Evidence: implementation verified; guardian commit pending.
 - [ ] T3 — Update tests, fixtures, generated golden files, and exact-output assertions for the new identity.
   - Route: delegated writer; multi-file write trigger.
   - Verification: focused package tests and golden regeneration where required.
@@ -49,3 +49,4 @@ Rename the entire product from VAS Sentinel and its technical variants to vcSent
 - User selected native naming conventions and a clean-cut migration.
 - Feature branch created: `feat/vcsentinel-rebrand`.
 - User selected `feature-branch-chain` delivery and authorized commits for this session.
+- T1 closed through the guardian slice flow; plan and answers transport artifacts were kept outside the worktree to avoid self-inclusion drift.
