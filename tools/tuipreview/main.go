@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ISeoane-Quental/vas.sentinel/internal/tui/art"
+	"github.com/ISeoane-Quental/vcSentinel/internal/tui/art"
 )
 
 func main() {
