@@ -1,7 +1,10 @@
 .codegraph/
 .atl/
 bin/
-# `go build ./cmd/sentinel` escribe el ejecutable en la raíz, no en bin/.
-# Anclados con barra: sin ella ignorarían también el paquete cmd/sentinel/.
+# `go build ./cmd/vcsentinel` writes the executable to the repository root, not bin/.
+# Leading slashes keep the ignore rule from matching the cmd/vcsentinel/ package.
+/vcsentinel
+/vcsentinel.exe
+# Preserve pre-cutover root binaries without making them part of the product.
 /sentinel
 /sentinel.exe
