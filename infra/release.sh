@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# VAS Sentinel - release script (Linux/Debian)
+# vcSentinel - release script (Linux/Debian)
 # Genera los assets multiplataforma y publica la release en GitHub.
 # La versión se lee de release.yml (fuente de verdad); se puede forzar con SENTINEL_VERSION.
 set -e
@@ -21,10 +21,10 @@ go run ./tools/release
 
 echo "=== publish GitHub release v$VERSION ==="
 gh release create "v$VERSION" \
-  "bin/$VERSION/sentinel-windows-amd64.exe" \
-  "bin/$VERSION/sentinel-linux-amd64" \
-  "bin/$VERSION/sentinel-linux-arm64" \
-  --title "VAS Sentinel v$VERSION" \
+  "bin/$VERSION/vcsentinel-windows-amd64.exe" \
+  "bin/$VERSION/vcsentinel-linux-amd64" \
+  "bin/$VERSION/vcsentinel-linux-arm64" \
+  --title "vcSentinel v$VERSION" \
   --generate-notes
 
 echo

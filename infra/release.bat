@@ -1,5 +1,5 @@
 @echo off
-REM VAS Sentinel - release script (Windows)
+REM vcSentinel - release script (Windows)
 REM Genera los assets multiplataforma y publica la release en GitHub.
 REM La versión se lee de release.yml (fuente de verdad); se puede forzar con SENTINEL_VERSION.
 setlocal
@@ -22,7 +22,7 @@ go run ./tools/release
 if errorlevel 1 goto :fail
 
 echo === publish GitHub release v%VERSION% ===
-gh release create "v%VERSION%" "bin\%VERSION%\sentinel-windows-amd64.exe" "bin\%VERSION%\sentinel-linux-amd64" "bin\%VERSION%\sentinel-linux-arm64" --title "VAS Sentinel v%VERSION%" --generate-notes
+gh release create "v%VERSION%" "bin\%VERSION%\vcsentinel-windows-amd64.exe" "bin\%VERSION%\vcsentinel-linux-amd64" "bin\%VERSION%\vcsentinel-linux-arm64" --title "vcSentinel v%VERSION%" --generate-notes
 if errorlevel 1 goto :fail
 
 echo.
