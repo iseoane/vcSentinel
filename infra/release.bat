@@ -1,7 +1,7 @@
 @echo off
 REM vcSentinel - release script (Windows)
 REM Genera los assets multiplataforma y publica la release en GitHub.
-REM La versión se lee de release.yml (fuente de verdad); se puede forzar con SENTINEL_VERSION.
+REM La versión se lee de release.yml (fuente de verdad); se puede forzar con VCSENTINEL_VERSION.
 setlocal
 cd /d "%~dp0\.."
 
@@ -11,7 +11,7 @@ if exist release.yml (
 )
 set "VERSION=%VERSION: =%"
 set "VERSION=%VERSION:"=%"
-if defined SENTINEL_VERSION set VERSION=%SENTINEL_VERSION%
+if defined VCSENTINEL_VERSION set VERSION=%VCSENTINEL_VERSION%
 
 echo === go vet ===
 go vet ./...

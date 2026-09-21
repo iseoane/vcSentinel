@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # vcSentinel - release script (Linux/Debian)
 # Genera los assets multiplataforma y publica la release en GitHub.
-# La versión se lee de release.yml (fuente de verdad); se puede forzar con SENTINEL_VERSION.
+# La versión se lee de release.yml (fuente de verdad); se puede forzar con VCSENTINEL_VERSION.
 set -e
 
 cd "$(dirname "$0")/.."
@@ -11,7 +11,7 @@ if [ -f release.yml ]; then
     VERSION="$(sed -n 's/^version:[[:space:]]*//p' release.yml | head -n1 | tr -d '"' | tr -d '\r')"
     [ -n "$VERSION" ] || VERSION="0.1.0"
 fi
-VERSION="${SENTINEL_VERSION:-$VERSION}"
+VERSION="${VCSENTINEL_VERSION:-$VERSION}"
 
 echo "=== go vet ==="
 go vet ./...
