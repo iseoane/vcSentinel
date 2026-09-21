@@ -1,4 +1,4 @@
-module github.com/ISeoane-Quental/vas.sentinel
+module github.com/ISeoane-Quental/vcSentinel
 
 go 1.26.5
 
