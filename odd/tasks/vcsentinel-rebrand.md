@@ -22,14 +22,14 @@ Rename the entire product from VAS Sentinel and its technical variants to vcSent
   - Route: delegated writer; multi-file write trigger.
   - Verification: `go test ./cmd/vcsentinel ./tools/release`, `go build ./...`, `go test ./internal/setup`, focused `internal/git` tests, and scoped `git diff --check` passed; independent verification found and the writer corrected stale setup expectations and recovery guidance.
   - Evidence: slice commit range `61979cb..e554288` (nine guardian-created commits; core semantic unit `b1aef16`).
-- [ ] T2 — Rename configuration, environment variables, persistent storage, daemon/runtime paths, markers, hooks, and setup behavior with a clean cut.
+- [x] T2 — Rename configuration, environment variables, persistent storage, daemon/runtime paths, markers, hooks, and setup behavior with a clean cut.
   - Route: delegated writer; multi-file write trigger.
   - Verification: focused config/setup/store/daemon/ops/graph/reviewsnapshot/CLI tests, `go test ./...`, `go build ./...`, `go vet ./...`, `git diff --check`, fixture checks, and independent residual audit passed.
-  - Evidence: implementation verified; guardian commit pending.
-- [ ] T3 — Update tests, fixtures, generated golden files, and exact-output assertions for the new identity.
+  - Evidence: slice commit range `9aea10c..653930a` (eight guardian-created commits; core semantic unit `afe9f02`).
+- [x] T3 — Update tests, fixtures, generated golden files, and exact-output assertions for the new identity.
   - Route: delegated writer; multi-file write trigger.
-  - Verification: focused package tests and golden regeneration where required.
-  - Evidence: pending.
+  - Verification: focused intent/TUI/setup/review/git tests, `go test ./...`, `go build ./...`, `go vet ./...`, and golden regeneration passed; generated goldens have intentional alignment spaces excluded from generic diff-check.
+  - Evidence: implementation verified; guardian commit pending.
 - [ ] T4 — Update active documentation, project instructions, skills, examples, and repository-facing metadata while preserving immutable historical evidence.
   - Route: delegated writer; multi-file write trigger.
   - Verification: residual-reference audit and documentation checks.
@@ -50,3 +50,4 @@ Rename the entire product from VAS Sentinel and its technical variants to vcSent
 - Feature branch created: `feat/vcsentinel-rebrand`.
 - User selected `feature-branch-chain` delivery and authorized commits for this session.
 - T1 closed through the guardian slice flow; plan and answers transport artifacts were kept outside the worktree to avoid self-inclusion drift.
+- T2 closed through the guardian slice flow with a clean-cut configuration and runtime identity.
