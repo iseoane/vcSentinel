@@ -10,7 +10,7 @@ if exist release.yml (
 )
 set "VERSION=%VERSION: =%"
 set "VERSION=%VERSION:"=%"
-if defined SENTINEL_VERSION set VERSION=%SENTINEL_VERSION%
+if defined VCSENTINEL_VERSION set VERSION=%VCSENTINEL_VERSION%
 
 echo === gofmt ===
 gofmt -w .

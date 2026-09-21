@@ -9,7 +9,7 @@ if [ -f release.yml ]; then
     VERSION="$(sed -n 's/^version:[[:space:]]*//p' release.yml | head -n1 | tr -d '"' | tr -d '\r')"
     [ -n "$VERSION" ] || VERSION="0.1.0"
 fi
-VERSION="${SENTINEL_VERSION:-$VERSION}"
+VERSION="${VCSENTINEL_VERSION:-$VERSION}"
 
 echo "=== gofmt ==="
 gofmt -w .
