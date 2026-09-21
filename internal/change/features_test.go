@@ -68,7 +68,7 @@ func TestDetectorTestCovered(t *testing.T) {
 
 func TestDetectorCrossModule(t *testing.T) {
 	checkDetector(t, detectCrossModule,
-		FeaturesInput{Paths: []string{"internal/app/app.go", "cmd/sentinel/main.go"}},
+		FeaturesInput{Paths: []string{"internal/app/app.go", "cmd/vcsentinel/main.go"}},
 		FeaturesInput{Paths: []string{"internal/app/app.go", "internal/app/app_test.go"}})
 }
 

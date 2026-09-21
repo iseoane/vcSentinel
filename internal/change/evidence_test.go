@@ -169,10 +169,10 @@ func TestNewCharacteristicsInputParsesColorlessDiff(t *testing.T) {
 }
 
 func TestNewCharacteristicsInputKeepsPathStartingWithB(t *testing.T) {
-	path := "b/cmd/sentinel/x.go"
-	diff := `diff --git a/b/cmd/sentinel/x.go b/b/cmd/sentinel/x.go
---- a/b/cmd/sentinel/x.go
-+++ b/b/cmd/sentinel/x.go
+	path := "b/cmd/vcsentinel/x.go"
+	diff := `diff --git a/b/cmd/vcsentinel/x.go b/b/cmd/vcsentinel/x.go
+--- a/b/cmd/vcsentinel/x.go
++++ b/b/cmd/vcsentinel/x.go
 @@ -0,0 +1 @@
 +func Added() {}
 `

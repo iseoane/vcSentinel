@@ -25,8 +25,8 @@ func TestNativeProviderLoadsBasicGraph(t *testing.T) {
 		"internal/git/diff_test.go":      "package git\nimport \"testing\"\nfunc TestDiff(t *testing.T) {}\n",
 		"internal/review/engine.go":      "package review\nimport _ \"example.test/snapshot/internal/git\"\n",
 		"internal/review/engine_test.go": "package review\nimport \"testing\"\nfunc TestEngine(t *testing.T) {}\n",
-		"cmd/sentinel/main.go":           "package main\nimport _ \"example.test/snapshot/internal/review\"\nfunc main() {}\n",
-		"cmd/sentinel/main_test.go":      "package main\nimport \"testing\"\nfunc TestMain(t *testing.T) {}\n",
+		"cmd/vcsentinel/main.go":         "package main\nimport _ \"example.test/snapshot/internal/review\"\nfunc main() {}\n",
+		"cmd/vcsentinel/main_test.go":    "package main\nimport \"testing\"\nfunc TestMain(t *testing.T) {}\n",
 	})
 	p := providerForModule(t, dir)
 	result, err := p.Analyze([]string{"internal/git/diff.go", "internal/git/diff.go"})
@@ -35,12 +35,12 @@ func TestNativeProviderLoadsBasicGraph(t *testing.T) {
 	}
 	scope := result.Scope()
 	if !reflect.DeepEqual(scope.Packages(), []string{
-		"example.test/snapshot/cmd/sentinel", "example.test/snapshot/internal/git", "example.test/snapshot/internal/review",
-	}) || !reflect.DeepEqual(scope.Tests(), []string{"./cmd/sentinel", "./internal/git", "./internal/review"}) {
+		"example.test/snapshot/cmd/vcsentinel", "example.test/snapshot/internal/git", "example.test/snapshot/internal/review",
+	}) || !reflect.DeepEqual(scope.Tests(), []string{"./cmd/vcsentinel", "./internal/git", "./internal/review"}) {
 		t.Fatalf("scope = packages %v, tests %v", scope.Packages(), scope.Tests())
 	}
 	explanation := strings.Join(scope.Explanation(), "\n")
-	for _, part := range []string{"internal/git/diff.go", "internal/review", "cmd/sentinel", "imports"} {
+	for _, part := range []string{"internal/git/diff.go", "internal/review", "cmd/vcsentinel", "imports"} {
 		if !strings.Contains(explanation, part) {
 			t.Fatalf("explanation missing %q:\n%s", part, explanation)
 		}
