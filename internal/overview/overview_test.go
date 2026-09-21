@@ -31,8 +31,8 @@ func initRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-q", "-b", "main")
-	runGit(t, dir, "config", "user.email", "test@vas.sentinel")
-	runGit(t, dir, "config", "user.name", "VAS Sentinel Test")
+	runGit(t, dir, "config", "user.email", "test@vcsentinel")
+	runGit(t, dir, "config", "user.name", "vcSentinel Test")
 	runGit(t, dir, "config", "commit.gpgsign", "false")
 	writeFile(t, filepath.Join(dir, "base.txt"), "base\n")
 	runGit(t, dir, "add", ".")
@@ -410,7 +410,7 @@ func TestIsInternalWorktreeRule(t *testing.T) {
 }
 
 // TestCollectFiltersInternalSnapshotWorktrees drives Collect against a real
-// repository carrying a real linked worktree planted inside the sentinel
+// repository carrying a real linked worktree planted inside the vcsentinel
 // snapshot area under its .git common dir (git registers such worktrees
 // fine). Every count surface downstream of Repo.Worktrees (tree children,
 // LOCATION status tallies, clean/dirty splits) sees only the

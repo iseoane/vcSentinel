@@ -21,7 +21,7 @@ func TestSafePathsFiltersHostileVocabulary(t *testing.T) {
 		in   string
 		want bool // kept?
 	}{
-		{"simple relative", "cmd/sentinel/main.go", true},
+		{"simple relative", "cmd/vcsentinel/main.go", true},
 		{"dot-relative", "./internal/store", true},
 		{"backslash normalized", `internal\git\slice.go`, true},
 		{"absolute rejected", "/etc/passwd", false},

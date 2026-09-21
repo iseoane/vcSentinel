@@ -10,7 +10,7 @@ import (
 
 func TestReplaceWindowsBinary(t *testing.T) {
 	dir := t.TempDir()
-	currentBinary := filepath.Join(dir, "sentinel.exe")
+	currentBinary := filepath.Join(dir, "vcsentinel.exe")
 	tmpPath := filepath.Join(dir, "new.exe")
 
 	if err := os.WriteFile(currentBinary, []byte("version-old"), 0644); err != nil {
@@ -43,7 +43,7 @@ func TestReplaceWindowsBinary(t *testing.T) {
 
 func TestReplaceLinuxBinary(t *testing.T) {
 	dir := t.TempDir()
-	currentBinary := filepath.Join(dir, "sentinel")
+	currentBinary := filepath.Join(dir, "vcsentinel")
 	tmpPath := filepath.Join(dir, "new")
 
 	if err := os.WriteFile(currentBinary, []byte("version-old"), 0644); err != nil {
@@ -78,7 +78,7 @@ func TestReplaceLinuxBinary(t *testing.T) {
 
 func TestReplaceWindowsBinaryWithoutBackup(t *testing.T) {
 	dir := t.TempDir()
-	currentBinary := filepath.Join(dir, "sentinel.exe")
+	currentBinary := filepath.Join(dir, "vcsentinel.exe")
 	tmpPath := filepath.Join(dir, "new.exe")
 
 	if err := os.WriteFile(tmpPath, []byte("version-new"), 0644); err != nil {
@@ -96,7 +96,7 @@ func TestReplaceWindowsBinaryWithoutBackup(t *testing.T) {
 
 func TestReplaceWindowsBinaryFailureRestoresBackup(t *testing.T) {
 	dir := t.TempDir()
-	currentBinary := filepath.Join(dir, "sentinel.exe")
+	currentBinary := filepath.Join(dir, "vcsentinel.exe")
 
 	if err := os.WriteFile(currentBinary, []byte("version-old"), 0644); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestReplaceWindowsBinaryFailureRestoresBackup(t *testing.T) {
 
 func TestReplaceLinuxBinaryReplaceError(t *testing.T) {
 	dir := t.TempDir()
-	currentBinary := filepath.Join(dir, "sentinel")
+	currentBinary := filepath.Join(dir, "vcsentinel")
 	tmpPath := filepath.Join(dir, "new")
 
 	if err := os.Mkdir(currentBinary, 0755); err != nil {
@@ -145,7 +145,7 @@ func TestReplaceLinuxBinaryReplaceError(t *testing.T) {
 
 func TestVerifyBinary(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "sentinel")
+	path := filepath.Join(dir, "vcsentinel")
 	if runtime.GOOS == "windows" {
 		path += ".cmd"
 		if err := os.WriteFile(path, []byte("@echo off\r\necho v1.2.3\r\n"), 0755); err != nil {
@@ -167,7 +167,7 @@ func TestVerifyBinary(t *testing.T) {
 
 func TestVerifyBinaryFailure(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "sentinel")
+	path := filepath.Join(dir, "vcsentinel")
 	if runtime.GOOS == "windows" {
 		path += ".cmd"
 		if err := os.WriteFile(path, []byte("@echo off\r\nexit /b 1\r\n"), 0755); err != nil {

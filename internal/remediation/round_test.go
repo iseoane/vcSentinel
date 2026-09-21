@@ -279,7 +279,7 @@ func TestRunSingleRoundPassesThroughProfileAndTouchedFiles(t *testing.T) {
 	// A distinctive value, not the "standard" default every other test uses:
 	// if RunSingleRound ever dropped the profile parameter and hardcoded
 	// "standard" instead, this test must catch it, not pass by coincidence.
-	wantProfile := "sentinel-passthrough-profile"
+	wantProfile := "vcsentinel-passthrough-profile"
 	wantTouched := []string{"a.go", "b.go"}
 
 	var gotRevalidateProfile string

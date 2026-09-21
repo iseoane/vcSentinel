@@ -21,7 +21,7 @@ func TestRunAnnouncesProgressBeforeLongSteps(t *testing.T) {
 	worktree := t.TempDir()
 	writeProjectYML(t, worktree, twoAgentYML)
 	common := t.TempDir()
-	writeHook(t, common, "/usr/local/bin/sentinel")
+	writeHook(t, common, "/usr/local/bin/vcsentinel")
 	stageBinaries(t, "claude", "opencode", "rg")
 	env := stubEnv(t, common, map[string]string{"claude": "ok", "opencode": "ok"}, nil)
 
@@ -54,7 +54,7 @@ func TestRunNilProgressNeverPanics(t *testing.T) {
 	worktree := t.TempDir()
 	writeProjectYML(t, worktree, twoAgentYML)
 	common := t.TempDir()
-	writeHook(t, common, "/usr/local/bin/sentinel")
+	writeHook(t, common, "/usr/local/bin/vcsentinel")
 	stageBinaries(t, "claude", "opencode", "rg")
 	env := stubEnv(t, common, map[string]string{"claude": "ok", "opencode": "ok"}, nil)
 	env.LatestRelease = func() (string, error) { return "", errors.New("no network") }

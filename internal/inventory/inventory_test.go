@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// runGit runs git in dir and fails the test on any error (cmd/sentinel style).
+// runGit runs git in dir and fails the test on any error (cmd/vcsentinel style).
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -28,8 +28,8 @@ func initRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-q", "-b", "main")
-	runGit(t, dir, "config", "user.email", "test@vas.sentinel")
-	runGit(t, dir, "config", "user.name", "VAS Sentinel Test")
+	runGit(t, dir, "config", "user.email", "test@vcsentinel")
+	runGit(t, dir, "config", "user.name", "vcSentinel Test")
 	runGit(t, dir, "config", "commit.gpgsign", "false")
 	writeFile(t, filepath.Join(dir, "base.txt"), "base\n")
 	runGit(t, dir, "add", ".")

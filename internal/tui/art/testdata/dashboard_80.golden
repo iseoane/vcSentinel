@@ -1,8 +1,8 @@
  ══════════════════════════════════════════════════════════════════════════════ 
- SENTINEL CONTROL CENTER                    ● 2 daemons · 3 active · 1 attention
+ VCSENTINEL CONTROL CENTER                  ● 2 daemons · 3 active · 1 attention
  ══════════════════════════════════════════════════════════════════════════════ 
  REPOSITORIES                                                                   
- ▾ vas.sentinel           ● managed                                             
+ ▾ vcsentinel             ● managed                                             
    ├─ main              clean                                                   
    ├─ tui-control-cente 2 runs                                                  
    └─ ⚠ f8-t8-2-own-dif 1 attention                                             
@@ -10,11 +10,11 @@
  ▸ iseoane.dots           ● stopped                                             
  ────────────────────────────────────────────────────────────────────────────── 
  LOCATION                                                                       
- Repository   vas.sentinel                                                      
- Path         /home/operator/workspace/vas.sentinel                             
- Worktree     main · ~/workspace/vas.sentinel                                   
+ Repository   vcsentinel                                                        
+ Path         /home/operator/workspace/vcsentinel                               
+ Worktree     main · ~/workspace/vcsentinel                                     
  Branch       main                                                              
- Origin       git@github.com:org/vas.sentinel                                   
+ Origin       git@github.com:ISeoane-Quental/vcSentinel                         
  Daemon       ● managed by this session · pid 4321                              
  Status       clean · 3 worktrees · 3 runs                                      
  ══════════════════════════════════════════════════════════════════════════════ 

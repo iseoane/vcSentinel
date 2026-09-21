@@ -273,7 +273,7 @@ type treeProvider interface {
 
 // Compile-time pins for the runs-abort wiring: embedding must keep exposing
 // the context-carrying prompt path and tree discovery on the bridge, so
-// `sentinel runs abort` reaches the acpx child without per-call plumbing.
+// `vcsentinel runs abort` reaches the acpx child without per-call plumbing.
 var (
 	_ interface {
 		RunPromptWithContext(context.Context, string) (string, error)

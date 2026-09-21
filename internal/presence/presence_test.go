@@ -15,10 +15,10 @@ import (
 )
 
 // TestPresenceDeadChild is the helper-process entry point used to obtain a
-// provably dead PID: re-executed with VAS_PRESENCE_HELPER_EXIT=1 it returns
+// provably dead PID: re-executed with VCSENTINEL_PRESENCE_HELPER_EXIT=1 it returns
 // immediately, so its pid is fully reaped before the parent probes it.
 func TestPresenceDeadChild(t *testing.T) {
-	if os.Getenv("VAS_PRESENCE_HELPER_EXIT") != "1" {
+	if os.Getenv("VCSENTINEL_PRESENCE_HELPER_EXIT") != "1" {
 		t.Skip("helper process for dead-pid probing only")
 	}
 }
@@ -28,7 +28,7 @@ func TestPresenceDeadChild(t *testing.T) {
 // so no platform skip is needed.
 func deadPID(t *testing.T) int {
 	cmd := exec.Command(os.Args[0], "-test.run=TestPresenceDeadChild$")
-	cmd.Env = append(os.Environ(), "VAS_PRESENCE_HELPER_EXIT=1")
+	cmd.Env = append(os.Environ(), "VCSENTINEL_PRESENCE_HELPER_EXIT=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("spawn helper child: %v", err)
 	}
@@ -68,12 +68,12 @@ func TestProbeClassifiesDaemonRecords(t *testing.T) {
 	}{
 		{"no daemon dir means stopped", "", false},
 		{"record naming a dead pid means stopped",
-			endpointRecord("unix", "/tmp/vas-dead.sock", dead), false},
+			endpointRecord("unix", "/tmp/vcsentinel-dead.sock", dead), false},
 		{"record naming this live process means live",
 			endpointRecord("tcp", "127.0.0.1:4747", livePID), true},
 		{"corrupt json record means stopped", "{not json", false},
 		{"incomplete record without pid means stopped",
-			endpointRecord("unix", "/tmp/vas-empty.sock", 0), false},
+			endpointRecord("unix", "/tmp/vcsentinel-empty.sock", 0), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

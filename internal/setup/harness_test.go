@@ -38,14 +38,14 @@ func captureStdout(t *testing.T, fn func()) string {
 // effective installed version to the user.
 func TestVerifyBinaryReportsInstalledVersion(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "sentinel")
+	path := filepath.Join(dir, "vcsentinel")
 	if runtime.GOOS == "windows" {
 		path += ".cmd"
-		if err := os.WriteFile(path, []byte("@echo off\r\necho sentinel v9.9.9\r\n"), 0755); err != nil {
+		if err := os.WriteFile(path, []byte("@echo off\r\necho vcsentinel v9.9.9\r\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
 	} else {
-		if err := os.WriteFile(path, []byte("#!/bin/sh\necho sentinel v9.9.9\n"), 0755); err != nil {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\necho vcsentinel v9.9.9\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -217,7 +217,7 @@ func TestUninstallLeavesRepositoriesUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	hook := filepath.Join(hookDir, "pre-commit")
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsentinel check --staged\n"), 0755); err != nil {
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nvcsentinel check --staged\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0644); err != nil {

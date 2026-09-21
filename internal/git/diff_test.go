@@ -209,9 +209,9 @@ func TestMeasureVolumeFailsOutsideRepository(t *testing.T) {
 func prepareTestRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("GIT_AUTHOR_NAME", "VAS Sentinel Test")
+	t.Setenv("GIT_AUTHOR_NAME", "vcSentinel Test")
 	t.Setenv("GIT_AUTHOR_EMAIL", "test@vcsentinel")
-	t.Setenv("GIT_COMMITTER_NAME", "VAS Sentinel Test")
+	t.Setenv("GIT_COMMITTER_NAME", "vcSentinel Test")
 	t.Setenv("GIT_COMMITTER_EMAIL", "test@vcsentinel")
 
 	runGitInDir(t, dir, "init", "-q")

@@ -11,7 +11,7 @@ import (
 func TestRemoveBinary(t *testing.T) {
 	t.Run("removes an existing binary", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "sentinel.exe")
+		path := filepath.Join(dir, "vcsentinel.exe")
 		if err := os.WriteFile(path, []byte("binary"), 0755); err != nil {
 			t.Fatal(err)
 		}
