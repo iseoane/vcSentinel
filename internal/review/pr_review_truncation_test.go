@@ -100,7 +100,7 @@ func TestTruncatePipelineHandlesNestedMarkupInEvidence(t *testing.T) {
 // Evidence that literally contains the omission notice must not confuse the
 // count, and must not delete anything around it.
 func TestTruncatePipelineIsNotConfusedByEvidenceQuotingTheNotice(t *testing.T) {
-	quoted := "a log quoting _1 evidence blocks omitted for size; the full logs are under .vas_sentinel/evidence/._\nkeep me\n"
+	quoted := "a log quoting _1 evidence blocks omitted for size; the full logs are under .vcsentinel/evidence/._\nkeep me\n"
 	steps := []pipelineStep{
 		{Icon: "✅", Step: "review", Summary: "reviewed", Evidence: quoted},
 		{Icon: "✅", Step: "test", Summary: "tested", Evidence: strings.Repeat("t", 4000)},

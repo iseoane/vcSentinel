@@ -210,7 +210,7 @@ func TestInspectionUsesEmbeddedTerminalOutcomeWhenLegacyOutcomeSurfaceIsCorrupt(
 	if err != nil {
 		t.Fatal(err)
 	}
-	directory := filepath.Join(storeRoot, "vas-sentinel", "executions", "v1", string(handle.RunID))
+	directory := filepath.Join(storeRoot, "vcsentinel", "executions", "v1", string(handle.RunID))
 	if err := os.WriteFile(filepath.Join(directory, "outcomes", string(handle.InvocationID)+".json"), []byte("not-json"), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -81,7 +81,7 @@ validation:
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			worktree := t.TempDir()
-			path := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+			path := filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml")
 			writeConfig(t, path, c.yml)
 
 			cfg := defaultConfig()
@@ -103,7 +103,7 @@ validation:
 // explicitly, not just one of the two.
 func TestValidationFailsWhenInvalidNamesCapabilityAndValue(t *testing.T) {
 	worktree := t.TempDir()
-	path := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	path := filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml")
 	writeConfig(t, path, `
 validation:
   capabilities:
@@ -130,7 +130,7 @@ validation:
 // default.
 func TestValidationModeInvalidNamesValue(t *testing.T) {
 	worktree := t.TempDir()
-	path := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	path := filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml")
 	writeConfig(t, path, `
 validation:
   mode: "worktre"
@@ -156,7 +156,7 @@ func TestImplicitCapabilitiesFromLegacyCommands(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `
 lint_commands:
   - "gofmt -l ."
   - "go vet ./..."
@@ -201,7 +201,7 @@ func TestCompleteValidationParses(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `
 validation:
   capabilities:
     format:

@@ -48,7 +48,7 @@ func TestStoreAnchoredInGitCommonDirSharedAcrossWorktrees(t *testing.T) {
 	mainDir := t.TempDir()
 	execGit(t, mainDir, "init", "-q")
 	execGit(t, mainDir, "config", "user.email", "test@vas.sentinel")
-	execGit(t, mainDir, "config", "user.name", "vas-sentinel-test")
+	execGit(t, mainDir, "config", "user.name", "vcsentinel-test")
 	if err := os.WriteFile(filepath.Join(mainDir, "a.txt"), []byte("x"), 0644); err != nil {
 		t.Fatal(err)
 	}

@@ -18,7 +18,7 @@ import (
 // EventDetail is the structured payload used by operation event writers.
 type EventDetail map[string]any
 
-// Event is one line of events.jsonl: the append-only record of VAS Sentinel
+// Event is one line of events.jsonl: the append-only record of vcSentinel
 // operations in the repository.
 type Event struct {
 	At       time.Time `json:"at"`
@@ -65,7 +65,7 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-var eventsRelPath = filepath.Join("vas-sentinel", "events.jsonl")
+var eventsRelPath = filepath.Join("vcsentinel", "events.jsonl")
 
 // Rotation thresholds: the log never grows without bound. When the file
 // exceeds maxEventsBytes it is pruned to the last maxEventsLines lines.

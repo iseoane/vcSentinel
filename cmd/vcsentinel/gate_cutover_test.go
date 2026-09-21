@@ -57,7 +57,7 @@ func TestGateStrictConfigRejectsRemovedDurableRunsKey(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Chdir(worktree)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 		cutoverValidationYml+"gate:\n  durable_runs: false\n")
 
 	var output bytes.Buffer

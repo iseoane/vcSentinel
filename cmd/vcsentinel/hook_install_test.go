@@ -109,7 +109,7 @@ func TestInitInstallsHookInCommonDirWithMarkedRule(t *testing.T) {
 	}
 
 	if !setup.IsInitialized(root) {
-		t.Error("init did not leave the per-project configuration (.vas_sentinel/vassentinel.yml)")
+		t.Error("init did not leave the per-project configuration (.vcsentinel/vcsentinel.yml)")
 	}
 	if count := repositoryCount(t, registryPath); count != 1 {
 		t.Fatalf("init registered %d repositories, want 1", count)
@@ -223,7 +223,7 @@ func TestUninitKeepsRegistryWhenCleanupFails(t *testing.T) {
 	registryPath := isolateRepositoryRegistry(t)
 	root := prepareInitRepository(t)
 	runInit(root)
-	configPath := filepath.Join(root, ".vas_sentinel", "vassentinel.yml")
+	configPath := filepath.Join(root, ".vcsentinel", "vcsentinel.yml")
 	if err := os.Remove(configPath); err != nil {
 		t.Fatal(err)
 	}

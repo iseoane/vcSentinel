@@ -38,7 +38,7 @@ func TestCreateGlobalConfig(t *testing.T) {
 	if err := createGlobalConfig(); err != nil {
 		t.Fatalf("createGlobalConfig returned error: %v", err)
 	}
-	path := filepath.Join(home, ".vas_sentinel", "vassentinel.yml")
+	path := filepath.Join(home, ".vcsentinel", "vcsentinel.yml")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("the global config was not created at %s: %v", path, err)
@@ -71,7 +71,7 @@ func TestCreatePerProjectConfig(t *testing.T) {
 	if err := CreatePerProjectConfig(worktree); err != nil {
 		t.Fatalf("CreatePerProjectConfig returned error: %v", err)
 	}
-	path := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	path := filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("the per-project config was not created at %s: %v", path, err)
@@ -238,8 +238,8 @@ func TestAddShellPathBlock(t *testing.T) {
 
 func TestBinaryPaths(t *testing.T) {
 	home := t.TempDir()
-	if path := windowsBinaryPath(home); path != filepath.Join(home, ".vas_sentinel", "bin", "vcsentinel.exe") {
-		t.Errorf("windowsBinaryPath = %q, want the path under .vas_sentinel/bin/vcsentinel.exe", path)
+	if path := windowsBinaryPath(home); path != filepath.Join(home, ".vcsentinel", "bin", "vcsentinel.exe") {
+		t.Errorf("windowsBinaryPath = %q, want the path under .vcsentinel/bin/vcsentinel.exe", path)
 	}
 	if path := linuxBinaryPath(); path != "/usr/local/bin/vcsentinel" {
 		t.Errorf("linuxBinaryPath = %q, want /usr/local/bin/vcsentinel", path)

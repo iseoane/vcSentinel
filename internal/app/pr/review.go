@@ -20,7 +20,7 @@ import (
 )
 
 // FlagsPrReview carries the parsed `pr review` options across the dispatch
-// boundary. cmd/sentinel owns the flag parsing (the package-main tests drive
+// boundary. cmd/vcsentinel owns the flag parsing (the package-main tests drive
 // it); this struct is its counterpart here, so the fields are exported.
 type FlagsPrReview struct {
 	Base     string
@@ -122,7 +122,7 @@ func BranchPrReviewOptions(cfg config.Config, verifier *modelprobe.Verifier, wor
 	return wiring.BranchOptionsWithRefuter(cfg, verifier, review.BranchOptions{
 		Base: base,
 		// pr review reports record gaps but never audits commits on the
-		// operator's behalf; sentinel review owns per-commit verdicts.
+		// operator's behalf; vcsentinel review owns per-commit verdicts.
 		OnlyPending:            true,
 		Overview:               flags.Overview,
 		Factory:                factory,
@@ -203,7 +203,7 @@ func realPrReviewDeps() DepsPrReview {
 
 // RunPrReview analyzes the branch against the base, then authors and persists
 // its local judgement and evidence. It does not publish a pull request. It
-// records the pr-review event when done. cmd/sentinel parses the flags and exits
+// records the pr-review event when done. cmd/vcsentinel parses the flags and exits
 // on a parse error before dispatching here, and it owns the JSON-safe routing:
 // it passes the payload writer for both channels normally, and stderr for the
 // human motion in --json mode.
@@ -553,10 +553,10 @@ func RenderNetUnavailableLines(res *review.BranchResult) []string {
 			continue
 		}
 		if cause.InvocationID != "" {
-			lines = append(lines, fmt.Sprintf("? net dimension %q unavailable: cause unrecorded (invocation %s); inspect the owning run with `sentinel runs logs --run <run-id>` (locate it with `sentinel runs status`).", cause.Dimension, cause.InvocationID))
+			lines = append(lines, fmt.Sprintf("? net dimension %q unavailable: cause unrecorded (invocation %s); inspect the owning run with `vcsentinel runs logs --run <run-id>` (locate it with `vcsentinel runs status`).", cause.Dimension, cause.InvocationID))
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("? net dimension %q unavailable: cause unrecorded (no invocation recorded); inspect with `sentinel runs status`.", cause.Dimension))
+		lines = append(lines, fmt.Sprintf("? net dimension %q unavailable: cause unrecorded (no invocation recorded); inspect with `vcsentinel runs status`.", cause.Dimension))
 	}
 	return lines
 }

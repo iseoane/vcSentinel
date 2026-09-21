@@ -43,7 +43,7 @@ func TestReviewWithContextResultTruncatedTurnErrorsButKeepsEvidence(t *testing.T
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("VAS_SENTINEL_TEST_OUTPUT", truncationStream(tc.stopReason))
+			t.Setenv("VCSENTINEL_TEST_OUTPUT", truncationStream(tc.stopReason))
 			adapter := CLIAdapter{
 				BinaryName: compileAgentBinary(t, "opencode"),
 				Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
@@ -90,7 +90,7 @@ func TestReviewWithContextResultTruncatedTurnErrorsButKeepsEvidence(t *testing.T
 // count the scanner actually observed), never the zero a broken derivation
 // would produce.
 func TestTruncatedTurnErrorReportsObservedStepsNotZero(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", truncationStream("tool-calls"))
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", truncationStream("tool-calls"))
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
@@ -121,7 +121,7 @@ func TestDefaultReviewToolCallsSurvivesOpenCodeTruncationBelowIt(t *testing.T) {
 	}
 	stream := "{\"type\":\"text\",\"part\":{\"type\":\"text\",\"text\":\"complete answer\"}}\n" +
 		"{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"reason\":\"stop\"}}\n"
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", stream)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", stream)
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
@@ -147,7 +147,7 @@ func TestDefaultReviewToolCallsSurvivesOpenCodeTruncationBelowIt(t *testing.T) {
 // event is exactly what opencodeReviewScan.TerminalEventObserved is for.
 func TestReviewWithContextResultTreatsNoTerminalEventAsTheMostSevereTruncation(t *testing.T) {
 	stream := "{\"type\":\"text\",\"part\":{\"type\":\"text\",\"text\":\"orphan answer\"}}\n"
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", stream)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", stream)
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
@@ -177,7 +177,7 @@ func TestReviewWithContextResultTreatsNoTerminalEventAsTheMostSevereTruncation(t
 // regardless (see the test above); only the legacy string surface must empty
 // it on error.
 func TestReviewWithContextEmptiesOutputOnTruncation(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", truncationStream("tool-calls"))
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", truncationStream("tool-calls"))
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
@@ -258,7 +258,7 @@ func TestTruncatedTurnErrorMessageContainsThePermanentFailureLiteral(t *testing.
 // pointer to 2, never a bare zero value that would be indistinguishable from
 // "unknown".
 func TestReviewWithContextResultCarriesOpenCodeTurnCount(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadOpenCodeProbeFixture(t))
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", loadOpenCodeProbeFixture(t))
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},
@@ -284,7 +284,7 @@ func TestReviewWithContextResultCarriesOpenCodeTurnCount(t *testing.T) {
 // "the provider reports no turn count", which is exactly what a later
 // recalibration must never read as a real measurement.
 func TestReviewWithContextResultLeavesClaudeTurnCountNil(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadClaudeProbeFixture(t))
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", loadClaudeProbeFixture(t))
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "claude"),
 		Config:     config.AgentConfig{Model: "claude-haiku-4-5"},

@@ -25,7 +25,7 @@ const recordV1 = `{
 // acceptance: the new fields are optional.
 func TestReadRecordV1WithoutAuthorshipFields(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "vas-sentinel")
+	path := filepath.Join(dir, "vcsentinel")
 	if err := os.MkdirAll(path, 0755); err != nil {
 		t.Fatalf("could not create the directory: %v", err)
 	}

@@ -557,11 +557,11 @@ func TestReviewCommandClaudeRequiresSnapshotDirectory(t *testing.T) {
 // immutable snapshot directory.
 func TestRunReviewClaudeUsesSnapshotDirAsCwd(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
 	// The fake claude must answer in the format the production invocation now
 	// requests: one result object the rich path scans. The echoed prompt
 	// would fail the parser's fail-closed JSON check.
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
 	snapshotDir := t.TempDir()
 	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 10 * time.Second}
 
@@ -587,8 +587,8 @@ func TestRunReviewClaudeKeepsHostEnvironmentWithoutOpenCodeCredentials(t *testin
 	t.Setenv("HOME", hostHome)
 	t.Setenv("OPENCODE_AUTH_CONTENT", `{"openai":{"token":"host-secret"}}`)
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
 
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "claude"),
@@ -627,9 +627,9 @@ func TestRestrictedReviewKeepsProviderStateOutOfSharedSnapshot(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
-	t.Setenv("VAS_SENTINEL_TEST_WRITE_PROVIDER_STATE", "1")
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"reason\":\"stop\"}}\n")
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_WRITE_PROVIDER_STATE", "1")
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", "{\"type\":\"step_finish\",\"part\":{\"type\":\"step-finish\",\"reason\":\"stop\"}}\n")
 
 	sha := headSha(t)
 	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "opencode"), Timeout: 10 * time.Second}
@@ -816,10 +816,10 @@ func TestReviewCommandRejectsProvidersWithoutBoundedToolPermissions(t *testing.T
 // classifies the timeout as OutcomeFailure and the durable record lies about
 // why the dimension failed.
 func TestRunReviewMarksDeadlineExceeded(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_SLEEP", "30")
+	t.Setenv("VCSENTINEL_TEST_SLEEP", "30")
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
-	t.Setenv("VAS_SENTINEL_TEST_WRITE_PROVIDER_STATE", "1")
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_WRITE_PROVIDER_STATE", "1")
 	snapshotDir := t.TempDir()
 	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "opencode"), Timeout: 200 * time.Millisecond}
 

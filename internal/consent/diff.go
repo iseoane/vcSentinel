@@ -21,7 +21,7 @@ import (
 const (
 	stateVersion  = 1
 	maxGrantBytes = 4096
-	appDir        = "vas-sentinel"
+	appDir        = "vcsentinel"
 	consentDir    = "consent"
 )
 

@@ -46,7 +46,7 @@ func TestSavePRReviewReplacesPreviousHeadForTheSameBranch(t *testing.T) {
 	if got == nil || got.Body != "second" || got.HeadSHA != strings.Repeat("b", 40) {
 		t.Fatalf("ReadPRReview() = %#v, want the latest entry for the branch", got)
 	}
-	matches, err := filepath.Glob(filepath.Join(root, "vas-sentinel", "pr-reviews", "*.json"))
+	matches, err := filepath.Glob(filepath.Join(root, "vcsentinel", "pr-reviews", "*.json"))
 	if err != nil {
 		t.Fatalf("Glob() error = %v", err)
 	}
@@ -98,7 +98,7 @@ func TestSavePRReviewDoesNotMixStateWhenExistingEntryCannotBeCleaned(t *testing.
 	if err := store.SavePRReview(old); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "vas-sentinel", "pr-reviews", PRReviewKey(old.Branch, old.HeadSHA)+".json")
+	path := filepath.Join(root, "vcsentinel", "pr-reviews", PRReviewKey(old.Branch, old.HeadSHA)+".json")
 	if err := os.WriteFile(path, []byte("{"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestSavePRReviewRecoversBackupBeforeReadingOldState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	storeRoot := filepath.Join(root, "vas-sentinel")
+	storeRoot := filepath.Join(root, "vcsentinel")
 	dir := filepath.Join(storeRoot, subdirPRReviews)
 	backup := filepath.Join(storeRoot, ".pr-reviews-backup")
 	if err := os.Rename(dir, backup); err != nil {
@@ -167,7 +167,7 @@ func TestReadPRReviewRecoversCompletedReplacementBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	storeRoot := filepath.Join(root, "vas-sentinel")
+	storeRoot := filepath.Join(root, "vcsentinel")
 	dir := filepath.Join(storeRoot, subdirPRReviews)
 	backup := filepath.Join(storeRoot, ".pr-reviews-backup")
 	if err := os.Rename(dir, backup); err != nil {
@@ -285,7 +285,7 @@ func TestSavePRReviewConcurrentProcessesKeepBothBranches(t *testing.T) {
 	for _, entry := range entries {
 		assertPRReviewBody(t, store, entry.branch, "new")
 	}
-	storeRoot := filepath.Join(root, "vas-sentinel")
+	storeRoot := filepath.Join(root, "vcsentinel")
 	if matches, err := filepath.Glob(filepath.Join(storeRoot, "pr-reviews-*")); err != nil {
 		t.Fatal(err)
 	} else if len(matches) != 0 {

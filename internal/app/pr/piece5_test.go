@@ -55,7 +55,7 @@ func piece5Entry(t *testing.T, verdict string) store.PRReviewEntry {
 		"<details><summary>⚪ <b>build</b> — not configured</summary>\n\n</details>\n\n" +
 		"<details><summary>✅ <b>pr review</b> — body authored</summary>\n\n</details>\n\n" +
 		"<details><summary>⚪ <b>ci</b> — not observed by Sentinel</summary>\n\n</details>\n\n"
-	return store.PRReviewEntry{Branch: attestation.Branch, HeadSHA: piece5Head, Title: "Keep: title / unchanged", Verdict: verdict, Body: body, Attestation: raw, Evidence: []string{".vas_sentinel/evidence/feature-piece5-abc/pr-review.log"}, At: time.Time{}}
+	return store.PRReviewEntry{Branch: attestation.Branch, HeadSHA: piece5Head, Title: "Keep: title / unchanged", Verdict: verdict, Body: body, Attestation: raw, Evidence: []string{".vcsentinel/evidence/feature-piece5-abc/pr-review.log"}, At: time.Time{}}
 }
 
 func statusForVerdict(verdict string) string {

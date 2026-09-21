@@ -21,7 +21,7 @@ import (
 )
 
 // These proofs cover the full slice-3 chain with real configuration parsing:
-// a project vassentinel.yml sets review.cancellation_escalation, the config
+// a project vcsentinel.yml sets review.cancellation_escalation, the config
 // loader honors it, the production wiring shape turns it into an
 // EscalationPolicy, and the transport's worker context carries exactly the
 // Disabled semantics proven at controller level by ticket 08 slice 2: no
@@ -35,14 +35,14 @@ func requireLinuxConfigIntegration(t *testing.T) {
 	}
 }
 
-// writeProjectConfig writes a minimal project vassentinel.yml into worktree.
+// writeProjectConfig writes a minimal project vcsentinel.yml into worktree.
 func writeProjectConfig(t *testing.T, worktree, yamlBody string) {
 	t.Helper()
-	directory := filepath.Join(worktree, ".vas_sentinel")
+	directory := filepath.Join(worktree, ".vcsentinel")
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(directory, "vassentinel.yml")
+	path := filepath.Join(directory, "vcsentinel.yml")
 	if err := os.WriteFile(path, []byte(yamlBody), 0600); err != nil {
 		t.Fatal(err)
 	}

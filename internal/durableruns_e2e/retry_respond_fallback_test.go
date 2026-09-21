@@ -166,7 +166,7 @@ func TestFallbackChainPrimaryFailsSecondaryServesWithEffectiveAgent(t *testing.T
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	worktree := t.TempDir()
-	configDir := filepath.Join(worktree, ".vas_sentinel")
+	configDir := filepath.Join(worktree, ".vcsentinel")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestFallbackChainPrimaryFailsSecondaryServesWithEffectiveAgent(t *testing.T
 		"  vas-e2e-secondary-agent:\n" +
 		"    model: fake-secondary-model\n" +
 		"    reasoning_effort: high\n"
-	if err := os.WriteFile(filepath.Join(configDir, "vassentinel.yml"), []byte(configYAML), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "vcsentinel.yml"), []byte(configYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

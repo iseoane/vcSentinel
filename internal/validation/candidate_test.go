@@ -81,7 +81,7 @@ func countSnapshots(t *testing.T, dir string) int {
 	if err != nil {
 		t.Fatalf("could not get the common-dir: %v", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(commonDir, "vas-sentinel", "snapshots"))
+	entries, err := os.ReadDir(filepath.Join(commonDir, "vcsentinel", "snapshots"))
 	if os.IsNotExist(err) {
 		return 0
 	}
@@ -157,7 +157,7 @@ func TestRunProfileOnCandidate_DirtyWorktreeAtFreeze_SnapshotReflects(t *testing
 	if err != nil {
 		t.Fatalf("could not get the common-dir: %v", err)
 	}
-	snapshotsDir := filepath.Join(commonDir, "vas-sentinel", "snapshots")
+	snapshotsDir := filepath.Join(commonDir, "vcsentinel", "snapshots")
 	entries, err := os.ReadDir(snapshotsDir)
 	if err != nil {
 		t.Fatalf("could not read the snapshot directory: %v", err)
@@ -381,7 +381,7 @@ func TestRunProfileOnCandidate_SweepsOldSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not get the common-dir: %v", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(commonDir, "vas-sentinel", "snapshots"))
+	entries, err := os.ReadDir(filepath.Join(commonDir, "vcsentinel", "snapshots"))
 	if err != nil {
 		t.Fatalf("could not read the snapshot directory: %v", err)
 	}

@@ -163,7 +163,7 @@ func readLedger(gitCommonDir string, input *Input) error {
 }
 
 func readStoredFindings(gitCommonDir string, input *Input) error {
-	directory := filepath.Join(gitCommonDir, "vas-sentinel", "findings")
+	directory := filepath.Join(gitCommonDir, "vcsentinel", "findings")
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -193,7 +193,7 @@ func readStoredFindings(gitCommonDir string, input *Input) error {
 }
 
 func listRetainedMetricIDs(gitCommonDir string) ([]string, error) {
-	directory := filepath.Join(gitCommonDir, "vas-sentinel", "metrics", "v1")
+	directory := filepath.Join(gitCommonDir, "vcsentinel", "metrics", "v1")
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return []string{}, nil

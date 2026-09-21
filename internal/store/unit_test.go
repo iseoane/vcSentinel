@@ -50,7 +50,7 @@ func TestStoreReadUnitMissing(t *testing.T) {
 func TestStoreUnitCorruptIsError(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	path := filepath.Join(dir, "vas-sentinel", subdirUnits, "u1.json")
+	path := filepath.Join(dir, "vcsentinel", subdirUnits, "u1.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}

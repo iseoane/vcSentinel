@@ -106,7 +106,7 @@ func runLint(worktree string) {
 		os.Exit(1)
 	}
 	if len(cfg.LintCommands) == 0 {
-		fmt.Println("✅ No lint commands configured (lint_commands in vassentinel.yml).")
+		fmt.Println("✅ No lint commands configured (lint_commands in vcsentinel.yml).")
 		return
 	}
 
@@ -260,8 +260,8 @@ func applyTimeoutSeconds(cfg config.Config, seconds int) config.Config {
 // repo and returns the removed SHAs. Useful after rebase/amend/squash.
 //
 // It purges the common ledger and every legacy per-checkout ledger, not just
-// the current checkout's. Current reviews write to <gitCommonDir>/vas-sentinel;
-// linked-worktree paths remain only for legacy records. Purging only the common
+// the current checkout's. Current reviews write to <gitCommonDir>/vcsentinel;
+// linked-worktree paths remain only for historical records. Purging only the common
 // ledger would leave those legacy records orphaned.
 //
 // This matters beyond hygiene: T9.5 builds its retention cascade on this

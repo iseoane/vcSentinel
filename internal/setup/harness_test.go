@@ -62,8 +62,8 @@ func TestVerifyBinaryReportsInstalledVersion(t *testing.T) {
 
 // TestUpgradeReplacesBinaryPreservingConfig composes the upgrade
 // replacement primitives with real configuration artifacts: after the binary
-// is replaced in place, both the global configuration (~/.vas_sentinel/
-// vassentinel.yml) and a repository-local configuration must remain
+// is replaced in place, both the global configuration (~/.vcsentinel/
+// vcsentinel.yml) and a repository-local configuration must remain
 // byte-identical. Both replacement helpers are pure filesystem operations over
 // explicit paths, so both GOOS variants execute on every platform.
 func TestUpgradeReplacesBinaryPreservingConfig(t *testing.T) {
@@ -90,8 +90,8 @@ func TestUpgradeReplacesBinaryPreservingConfig(t *testing.T) {
 			if err := CreatePerProjectConfig(repo); err != nil {
 				t.Fatalf("CreatePerProjectConfig returned error: %v", err)
 			}
-			globalPath := filepath.Join(home, ".vas_sentinel", "vassentinel.yml")
-			repoPath := filepath.Join(repo, ".vas_sentinel", "vassentinel.yml")
+			globalPath := filepath.Join(home, ".vcsentinel", "vcsentinel.yml")
+			repoPath := filepath.Join(repo, ".vcsentinel", "vcsentinel.yml")
 			globalBefore, err := os.ReadFile(globalPath)
 			if err != nil {
 				t.Fatal(err)
@@ -226,7 +226,7 @@ func TestUninstallLeavesRepositoriesUntouched(t *testing.T) {
 	before := snapshotTree(t, repo)
 
 	// Installed artifacts that uninstall owns.
-	binary := filepath.Join(home, ".vas_sentinel", "bin", goBinaryName())
+	binary := filepath.Join(home, ".vcsentinel", "bin", goBinaryName())
 	if err := os.MkdirAll(filepath.Dir(binary), 0755); err != nil {
 		t.Fatal(err)
 	}

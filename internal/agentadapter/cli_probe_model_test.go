@@ -37,7 +37,7 @@ func argsWithModel(t *testing.T, capture agentCapture, expectedModel string) {
 func TestPromptProbeRequestsConfiguredModelOpenCode(t *testing.T) {
 	const model = "opencode-go/glm-5.3-flash"
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: model, ReasoningEffort: "low"},
@@ -65,7 +65,7 @@ func TestPromptProbeRequestsConfiguredModelOpenCode(t *testing.T) {
 func TestPromptProbeRequestsConfiguredModelClaude(t *testing.T) {
 	const model = "claude-sonnet-5"
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "claude"),
 		Config:     config.AgentConfig{Model: model, ReasoningEffort: "high"},
@@ -92,7 +92,7 @@ func TestPromptProbeRequestsConfiguredModelClaude(t *testing.T) {
 
 func TestPromptProbeWithoutModelAddsNoFlag(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Timeout:    10 * time.Second,

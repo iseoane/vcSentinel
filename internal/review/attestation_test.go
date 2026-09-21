@@ -40,12 +40,12 @@ func TestParseAttestation(t *testing.T) {
 		},
 		{
 			name:    "malformed JSON",
-			body:    "<!-- vas-sentinel-attestation:v1 {not-json} -->",
+			body:    "<!-- vcsentinel-attestation:v1 {not-json} -->",
 			wantErr: ErrInvalidAttestation,
 		},
 		{
 			name:    "unknown schema version",
-			body:    "<!-- vas-sentinel-attestation:v2 {\"head_sha\":\"abc123\"} -->",
+			body:    "<!-- vcsentinel-attestation:v2 {\"head_sha\":\"abc123\"} -->",
 			wantErr: ErrUnsupportedAttestationSchema,
 		},
 		{
@@ -84,7 +84,7 @@ func TestRenderAttestationEscapesJSONWithinOneHTMLComment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderAttestation() error = %v", err)
 	}
-	if !strings.HasPrefix(comment, "<!-- vas-sentinel-attestation:v1 {") || !strings.HasSuffix(comment, "} -->") {
+	if !strings.HasPrefix(comment, "<!-- vcsentinel-attestation:v1 {") || !strings.HasSuffix(comment, "} -->") {
 		t.Fatalf("RenderAttestation() = %q, want one v1 HTML comment", comment)
 	}
 	if strings.Contains(comment, "\n") {

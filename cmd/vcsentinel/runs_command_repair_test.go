@@ -46,7 +46,7 @@ func terminatingExtra() []fixtureTransition {
 // snapshotPathFor locates the persisted state.json of one run so tests can
 // simulate the crash window by removing the snapshot after a real append.
 func snapshotPathFor(root, runID string) string {
-	return filepath.Join(root, "vas-sentinel", "executions", "v1", runID, "state.json")
+	return filepath.Join(root, "vcsentinel", "executions", "v1", runID, "state.json")
 }
 
 func TestRunsRecoverRepairRestoresUnprojectedRun(t *testing.T) {
@@ -107,7 +107,7 @@ func TestRunsRecoverRepairRefusesNonUnprojectedClasses(t *testing.T) {
 	corruptRoot := t.TempDir()
 	corruptBacking := store.NewStore(corruptRoot)
 	corruptRunID := string(appendReconciledFixtureStream(t, corruptBacking, "candidate:cli-corrupt", nil))
-	eventsPath := filepath.Join(corruptRoot, "vas-sentinel", "executions", "v1", corruptRunID, "events.jsonl")
+	eventsPath := filepath.Join(corruptRoot, "vcsentinel", "executions", "v1", corruptRunID, "events.jsonl")
 	data, err := os.ReadFile(eventsPath)
 	if err != nil {
 		t.Fatal(err)

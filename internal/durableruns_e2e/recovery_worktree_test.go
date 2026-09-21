@@ -95,7 +95,7 @@ func TestRecoveryOrphanedCanceledRelaunchesExplicitlyAndScanCleansUp(t *testing.
 
 // Linked-worktree consistency: a durable run admitted from one worktree of a
 // repository is observable with IDENTICAL state from a linked worktree,
-// because both resolve their store through <git-common-dir>/vas-sentinel.
+// because both resolve their store through <git-common-dir>/vcsentinel.
 
 func TestLinkedWorktreesObserveIdenticalRunStateThroughCommonDirStore(t *testing.T) {
 	repoRoot := t.TempDir()

@@ -65,7 +65,7 @@ func TestWriteEvidenceRefusesToFollowASymlink(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("untouched\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(worktree, ".vas_sentinel", "evidence", evidenceDirName("feature/x"))
+	root := filepath.Join(worktree, ".vcsentinel", "evidence", evidenceDirName("feature/x"))
 	if err := os.MkdirAll(root, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestWriteEvidenceRefusesAnInternalSymlinkedAncestor(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte("untouched\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(worktree, ".vas_sentinel", "evidence", evidenceDirName("feature/x"))
+	link := filepath.Join(worktree, ".vcsentinel", "evidence", evidenceDirName("feature/x"))
 	if err := os.MkdirAll(filepath.Dir(link), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func runEvidenceGit(t *testing.T, worktree string, args ...string) {
 func TestWriteEvidenceRefusesASymlinkedAncestor(t *testing.T) {
 	worktree := t.TempDir()
 	outside := t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(worktree, ".vas_sentinel")); err != nil {
+	if err := os.Symlink(outside, filepath.Join(worktree, ".vcsentinel")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	if _, err := WriteEvidence(worktree, "feature/x", []EvidenceLog{{Step: "review", Content: "hijacked\n"}}); err == nil {

@@ -270,7 +270,7 @@ func TestNewAdapterForMessageUnknownAgent(t *testing.T) {
 	if err == nil {
 		t.Fatalf("an error was expected for an unconfigured agent, got %T/%v", adapter, err)
 	}
-	want := `agent "agente-inexistente-xyz" is not configured in vassentinel.yml`
+	want := `agent "agente-inexistente-xyz" is not configured in vcsentinel.yml`
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q (compatibility with NewAgentAdapterNamed)", err.Error(), want)
 	}

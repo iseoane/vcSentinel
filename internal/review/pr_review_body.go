@@ -109,7 +109,7 @@ func validateAttestation(res *BranchResult, attestation Attestation) error {
 
 func renderIntentLines(intents []IntentLine, shas []string) string {
 	if len(intents) == 0 {
-		return "_No intent recorded. These commits were not created through `sentinel slice`._\n"
+		return "_No intent recorded. These commits were not created through `vcsentinel slice`._\n"
 	}
 	seenClaims := make(map[string]struct{}, len(intents))
 	claimedSHAs := make(map[string]struct{}, len(intents))
@@ -137,7 +137,7 @@ func renderIntentLines(intents []IntentLine, shas []string) string {
 		fmt.Fprintf(&b, "- %s _(%s)_\n", sanitizeText(text), source)
 	}
 	if b.Len() == 0 {
-		return "_No intent recorded. These commits were not created through `sentinel slice`._\n"
+		return "_No intent recorded. These commits were not created through `vcsentinel slice`._\n"
 	}
 	var missing []string
 	for _, sha := range shas {

@@ -16,7 +16,7 @@ func TestLoadStrictLocalConfig_UnknownKey_ReturnsErrorWithLine(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 		"active_agent: \"claude\"\nkey_inexistsnte: true\n")
 
 	_, err := LoadStrictLocalConfig(worktree)
@@ -36,7 +36,7 @@ func TestLoadStrictLocalConfig_ValidConfig_ChangesNothing(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 		"active_agent: \"opencode\"\n")
 
 	cfg, err := LoadStrictLocalConfig(worktree)

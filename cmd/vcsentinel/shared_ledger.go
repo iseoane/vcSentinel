@@ -19,7 +19,7 @@ import (
 // work to a writer in a dedicated worktree is the mandated workflow here, so
 // that was the normal path. FU-12 in docs/issues/decisions.md records the
 // measurement, including a review whose record landed in
-// .git/worktrees/fu10-ticket-04/vas-sentinel/.
+// .git/worktrees/fu10-ticket-04/vcsentinel/.
 //
 // Records already written under a per-checkout ledger are not migrated and are
 // not read from here. They stay where they are, `runs prune`, `status --prune`

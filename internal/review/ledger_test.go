@@ -690,7 +690,7 @@ func TestPurgeOrphansAbortsWhenTheCriterionFails(t *testing.T) {
 // without exercising anything.
 func TestListRecordsFailsWhenTheLedgerDirectoryCannotBeRead(t *testing.T) {
 	gitDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(gitDir, "vas-sentinel"), []byte("not a directory"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(gitDir, "vcsentinel"), []byte("not a directory"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -719,7 +719,7 @@ func TestListRecordsFailsWhenTheLedgerDirectoryCannotBeRead(t *testing.T) {
 // docs/issues/decisions.md (FU-16 entry).
 func TestListRecordsFailsOnADanglingLedgerSymlink(t *testing.T) {
 	gitDir := t.TempDir()
-	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vas-sentinel")); err != nil {
+	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vcsentinel")); err != nil {
 		t.Skipf("this platform refuses to create a symlink without extra privileges: %v", err)
 	}
 
@@ -866,8 +866,8 @@ const (
 // the environment, which is the standard way to get real processes out of `go
 // test` without a second binary to build and keep in sync.
 func TestSaveRevisionAcrossProcesses(t *testing.T) {
-	if dir := os.Getenv("VAS_SENTINEL_TEST_LEDGER_DIR"); dir != "" {
-		writeChildRevisions(t, dir, os.Getenv("VAS_SENTINEL_TEST_WRITER"))
+	if dir := os.Getenv("VCSENTINEL_TEST_LEDGER_DIR"); dir != "" {
+		writeChildRevisions(t, dir, os.Getenv("VCSENTINEL_TEST_WRITER"))
 		return
 	}
 
@@ -884,8 +884,8 @@ func TestSaveRevisionAcrossProcesses(t *testing.T) {
 	for i := 0; i < writersAcrossProcesses; i++ {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestSaveRevisionAcrossProcesses$", "-test.v")
 		cmd.Env = append(os.Environ(),
-			"VAS_SENTINEL_TEST_LEDGER_DIR="+dir,
-			fmt.Sprintf("VAS_SENTINEL_TEST_WRITER=writer-%d", i))
+			"VCSENTINEL_TEST_LEDGER_DIR="+dir,
+			fmt.Sprintf("VCSENTINEL_TEST_WRITER=writer-%d", i))
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("starting writer %d: %v", i, err)
 		}
@@ -1144,7 +1144,7 @@ func TestSaveRevisionDoesNotHideTheUnreleasedLock(t *testing.T) {
 // This is the same separation in the same file.
 func TestMarkFixedFailsOnADanglingLedger(t *testing.T) {
 	gitDir := t.TempDir()
-	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vas-sentinel")); err != nil {
+	if err := os.Symlink(filepath.Join(gitDir, "ledger-that-was-removed"), filepath.Join(gitDir, "vcsentinel")); err != nil {
 		t.Skipf("this platform refuses to create a symlink without extra privileges: %v", err)
 	}
 

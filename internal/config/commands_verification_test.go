@@ -18,7 +18,7 @@ func TestVerificationCommands(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `
 test_commands:
   - "go test ./..."
   - "go test -race ./internal/review"
@@ -76,9 +76,9 @@ func checkCommandMerge(t *testing.T, key string, get func(Config) []string, glob
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"),
+	writeConfig(t, filepath.Join(home, ".vcsentinel", "vcsentinel.yml"),
 		fmt.Sprintf("%s:\n%s", key, yamlList(global)))
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 		fmt.Sprintf("%s:\n%s", key, yamlList(local)))
 
 	commands := get(LoadLocalConfig(worktree))
@@ -110,6 +110,6 @@ func TestVerificationCommandsPrecedenceBuild(t *testing.T) {
 	checkCommandMerge(t, "build_commands",
 		func(c Config) []string { return c.BuildCommands },
 		[]string{"go build ./..."},
-		[]string{"go build -race ./cmd/sentinel"},
-		[]string{"go build ./...", "go build -race ./cmd/sentinel"})
+		[]string{"go build -race ./cmd/vcsentinel"},
+		[]string{"go build ./...", "go build -race ./cmd/vcsentinel"})
 }

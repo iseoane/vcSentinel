@@ -107,7 +107,7 @@ func TestRunsRecoverOwnerLossCreatesFreshInvocationEndToEnd(t *testing.T) {
 }
 
 // hashVCSentinelTree fingerprints every file under the repository's
-// vas-sentinel directory so any CLI-level write changes at least one digest.
+// vcsentinel directory so any CLI-level write changes at least one digest.
 func hashVCSentinelTree(t *testing.T, root string) map[string]string {
 	t.Helper()
 	digests := map[string]string{}
@@ -326,7 +326,7 @@ func TestRunsAbortOrphanedSettlesAnOwnerlessRun(t *testing.T) {
 
 	// The reason must be recorded, or the settlement is indistinguishable from
 	// an ordinary abort.
-	raw, err := os.ReadFile(filepath.Join(commonDir, "vas-sentinel", "executions", "v1", runID, "events.jsonl"))
+	raw, err := os.ReadFile(filepath.Join(commonDir, "vcsentinel", "executions", "v1", runID, "events.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}

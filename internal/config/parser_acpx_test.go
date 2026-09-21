@@ -13,7 +13,7 @@ func TestAgentEntryParsesACPXFields(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `
 active_agent: claude-acpx
 agents:
   claude-acpx:
@@ -43,7 +43,7 @@ func TestAgentEntryEnforcementDefaultsToNone(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `
 active_agent: opencode-acpx
 agents:
   opencode-acpx:
@@ -59,13 +59,13 @@ agents:
 
 // TestLegacyAgentEntriesStayUnchanged pins the compatibility contract: a
 // legacy-style configuration without any of the new keys produces agent
-// entries whose new fields stay zero-valued, so no existing vassentinel.yml
+// entries whose new fields stay zero-valued, so no existing vcsentinel.yml
 // changes behavior.
 func TestLegacyAgentEntriesStayUnchanged(t *testing.T) {
 	home := t.TempDir()
 	worktree := t.TempDir()
 	setHome(t, home)
-	writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(home, ".vcsentinel", "vcsentinel.yml"), `
 version: 1
 active_agent: claude
 agents:

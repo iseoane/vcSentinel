@@ -19,7 +19,7 @@ func TestCIConfigDefaultsAndStrictValues(t *testing.T) {
 		t.Fatalf("defaults = %+v, want empty workflow and 900/15 seconds", cfg.CI)
 	}
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `ci:
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `ci:
   workflow: verify.yml
   wait_seconds: 42
   poll_seconds: 7
@@ -49,7 +49,7 @@ func TestCIConfigRejectsInvalidValuesAndUnknownKeys(t *testing.T) {
 			home := t.TempDir()
 			worktree := t.TempDir()
 			setHome(t, home)
-			writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tc.yml)
+			writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), tc.yml)
 			_, err := LoadStrictLocalConfig(worktree)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want text %q", err, tc.want)
@@ -60,7 +60,7 @@ func TestCIConfigRejectsInvalidValuesAndUnknownKeys(t *testing.T) {
 
 func TestCIConfigWithEmptyWorkflowRemainsDisabled(t *testing.T) {
 	worktree := t.TempDir()
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `ci:
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `ci:
   workflow: ""
   wait_seconds: 2
   poll_seconds: 1

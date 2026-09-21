@@ -4,7 +4,7 @@
 // lifecycle hook (pre-commit, pre-push, pr) reimplement its own ordering.
 //
 // The business logic lives here (never in cmd/, see the architecture note of
-// the ticket): cmd/sentinel/commands_gate.go only parses flags, resolves the
+// the ticket): cmd/vcsentinel/gate_command.go only parses flags, resolves the
 // real seams (git, agentadapter), and prints Result.
 package gate
 
@@ -30,7 +30,7 @@ const (
 // PASS and a current one are indistinguishable from the record alone. Saying
 // it on every green run is the cheapest honest way to keep the two apart for a
 // person reading output; the durable contract declares it separately.
-const ValidationCoverageNotice = "   Coverage: deterministic validation only. Per-commit quality is `sentinel review`."
+const ValidationCoverageNotice = "   Coverage: deterministic validation only. Per-commit quality is `vcsentinel review`."
 
 // ExitCode maps Result.State to its exit code: 0 PASS, 1 VALIDATION_FAILED,
 // 4 INFRASTRUCTURE_ERROR. An unknown state is NEVER treated as PASS: a gate
@@ -85,7 +85,7 @@ type Options struct {
 	// --profile). Do not confuse it with Stage: Stage identifies the
 	// lifecycle point (messages/record), Profile identifies WHAT is validated
 	// — they are independent axes (T1.7 design decision, also documented in
-	// cmd/sentinel/commands_gate.go).
+	// cmd/vcsentinel/gate_command.go).
 	Profile      string
 	ChangedPaths []string
 
@@ -97,14 +97,14 @@ type Options struct {
 	RunValidation func(profile string, scope []string, opts validation.RunOptions) ([]validation.ValidationRun, error)
 
 	// Stage is the --stage lifecycle context embedded in the durable root
-	// run request. cmd/sentinel's facade messages also read the stage value.
+	// run request. cmd/vcsentinel's facade messages also read the stage value.
 	Stage string
 	// CandidateSHA is the candidate HEAD commit SHA embedded in the durable
 	// root run request.
 	CandidateSHA string
 	// DurableStore backs the root gate run and every validation-job
 	// settlement. A nil store fails honestly as infrastructure before any
-	// phase executes; cmd/sentinel wires it through applyDurableCutover over
+	// phase executes; cmd/vcsentinel wires it through applyDurableCutover over
 	// the repository common-dir store.
 	DurableStore *store.Store
 }

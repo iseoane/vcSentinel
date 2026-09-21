@@ -45,7 +45,7 @@ Flags:
 Example:
   vcsentinel help gate
 `,
-	"init": `Purpose: inject the volume rule into agent instruction files, create the project configuration (.vas_sentinel/vassentinel.yml), and install the repository pre-commit hook. Always runs at the worktree root (redirects automatically from a subdirectory).
+	"init": `Purpose: inject the volume rule into agent instruction files, create the project configuration (.vcsentinel/vcsentinel.yml), and install the repository pre-commit hook. Always runs at the worktree root (redirects automatically from a subdirectory).
 
 Usage:
   vcsentinel init
@@ -67,7 +67,7 @@ Flags:
 Example:
   vcsentinel uninit
 `,
-	"lint": `Purpose: run the configured lint_commands from vassentinel.yml; exits 1 if any command fails.
+	"lint": `Purpose: run the configured lint_commands from vcsentinel.yml; exits 1 if any command fails.
 
 Usage:
   vcsentinel lint

@@ -89,7 +89,7 @@ type harnessDaemon struct {
 func startHarnessDaemon(t *testing.T, adapter execution.Adapter) harnessDaemon {
 	t.Helper()
 	// Short-lived directory with a SHORT prefix: the unix transport binds
-	// <dir>/vas-sentinel/daemon/daemon.sock inside sun_path's hard 108-byte
+	// <dir>/vcsentinel/daemon/daemon.sock inside sun_path's hard 108-byte
 	// budget, and t.TempDir() would spend most of it on the test name.
 	commonDir, err := os.MkdirTemp("", "vh")
 	if err != nil {

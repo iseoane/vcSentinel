@@ -62,7 +62,7 @@ func WriteEvidence(worktree, branch string, logs []EvidenceLog) ([]string, error
 		if err := writeEvidenceFile(evidenceRoot, step+".log", log.Content); err != nil {
 			return nil, err
 		}
-		paths = append(paths, path.Join(".vas_sentinel", "evidence", dir, step+".log"))
+		paths = append(paths, path.Join(".vcsentinel", "evidence", dir, step+".log"))
 	}
 	return paths, nil
 }
@@ -70,7 +70,7 @@ func WriteEvidence(worktree, branch string, logs []EvidenceLog) ([]string, error
 func openEvidenceRoot(root *os.Root, dir string) (*os.Root, error) {
 	current := root
 	closeCurrent := false
-	for _, component := range []string{".vas_sentinel", "evidence", dir} {
+	for _, component := range []string{".vcsentinel", "evidence", dir} {
 		if err := ensureDirectory(current, component); err != nil {
 			if closeCurrent {
 				current.Close()

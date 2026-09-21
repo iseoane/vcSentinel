@@ -227,7 +227,7 @@ func buildRunsController(worktree string) (*execution.Controller, error) {
 }
 
 // daemonEndpointForRuns resolves the repository-local daemon endpoint for
-// runs commands: it loads endpoint.json from <git-common-dir>/vas-sentinel/
+// runs commands: it loads endpoint.json from <git-common-dir>/vcsentinel/
 // daemon (daemon.Dir), dials it, and performs the authenticated handshake
 // bound to FingerprintRepository(gitCommonDir). ANY failure along that chain
 // — missing or corrupt record, unreachable endpoint, handshake rejection —

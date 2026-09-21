@@ -26,7 +26,7 @@ func exitOnError(err error) {
 // path. The temporary file avoids dirtying the worktree: the template is an
 // ephemeral publication artifact.
 func WritePRTemplate(body string) (string, error) {
-	file, err := os.CreateTemp("", "sentinel_pr_*.md")
+	file, err := os.CreateTemp("", "vcsentinel-pr-*.md")
 	if err != nil {
 		return "", fmt.Errorf("could not create the temporary template file: %w", err)
 	}

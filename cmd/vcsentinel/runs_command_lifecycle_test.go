@@ -161,7 +161,7 @@ func TestRunsVerifyDetectsTamperedEventLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	logPath := filepath.Join(commonDir, "vas-sentinel", "executions", "v1", string(tamperedID), "events.jsonl")
+	logPath := filepath.Join(commonDir, "vcsentinel", "executions", "v1", string(tamperedID), "events.jsonl")
 	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		t.Fatal(err)

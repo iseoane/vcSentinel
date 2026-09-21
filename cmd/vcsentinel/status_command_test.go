@@ -26,11 +26,11 @@ import (
 // same one the os/exec library uses to test itself). Without the environment
 // variable guard, a normal `go test` run treats it as an empty passing test.
 func TestHelperProcess(t *testing.T) {
-	if os.Getenv("VAS_SENTINEL_HELPER_PROCESS") != "1" {
+	if os.Getenv("VCSENTINEL_HELPER_PROCESS") != "1" {
 		return
 	}
-	worktree := os.Getenv("VAS_SENTINEL_HELPER_WORKTREE")
-	switch os.Getenv("VAS_SENTINEL_HELPER_FN") {
+	worktree := os.Getenv("VCSENTINEL_HELPER_WORKTREE")
+	switch os.Getenv("VCSENTINEL_HELPER_FN") {
 	case "runLint":
 		runLint(worktree)
 	case "runReview":
@@ -62,15 +62,15 @@ func runAsSubprocess(t *testing.T, fn, worktree, home string) (out string, exitC
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
 	cmd.Dir = worktree
 	env := []string{
-		"VAS_SENTINEL_HELPER_PROCESS=1",
-		"VAS_SENTINEL_HELPER_FN=" + fn,
-		"VAS_SENTINEL_HELPER_WORKTREE=" + worktree,
+		"VCSENTINEL_HELPER_PROCESS=1",
+		"VCSENTINEL_HELPER_FN=" + fn,
+		"VCSENTINEL_HELPER_WORKTREE=" + worktree,
 		"HOME=" + home,
 		"USERPROFILE=" + home,
 	}
 	for _, kv := range os.Environ() {
 		key := strings.SplitN(kv, "=", 2)[0]
-		if key == "HOME" || key == "USERPROFILE" || strings.HasPrefix(kv, "VAS_SENTINEL_HELPER_") {
+		if key == "HOME" || key == "USERPROFILE" || strings.HasPrefix(kv, "VCSENTINEL_HELPER_") {
 			continue
 		}
 		env = append(env, kv)
@@ -105,11 +105,11 @@ func worktreeWithCorruptHumanDisposition(t *testing.T) string {
 	run("init", "-q")
 	run("config", "user.email", "vcsentinel@example.test")
 	run("config", "user.name", "vcSentinel Test")
-	if err := os.MkdirAll(filepath.Join(worktree, ".vas_sentinel"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(worktree, ".vcsentinel"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	const configYAML = "validation:\n  capabilities:\n    format:\n      command: \"true\"\n  profiles:\n    standard: [format]\n"
-	if err := os.WriteFile(filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), []byte(configYAML), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(worktree, "a.go"), []byte("package fixture\n"), 0644); err != nil {
@@ -121,7 +121,7 @@ func worktreeWithCorruptHumanDisposition(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(commonDir, "vas-sentinel", "dispositions.jsonl")
+	path := filepath.Join(commonDir, "vcsentinel", "dispositions.jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -132,11 +132,11 @@ func worktreeWithCorruptHumanDisposition(t *testing.T) string {
 	return worktree
 }
 
-// writeYmlWithUnknownKey writes a per-project vassentinel.yml with a key
+// writeYmlWithUnknownKey writes a per-project vcsentinel.yml with a key
 // outside the schema, for the F1 error-propagation tests.
 func writeYmlWithUnknownKey(t *testing.T, worktree string) {
 	t.Helper()
-	path := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	path := filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatalf("could not create %s: %v", filepath.Dir(path), err)
 	}
@@ -948,7 +948,7 @@ func TestStatusFixedNoteAgreesWithTheBranchSummary(t *testing.T) {
 func TestReviewSupplementaryDoesNotRegisterBlobs(t *testing.T) {
 	worktree := cutoverRepository(t)
 	home := t.TempDir()
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), reviewAgentYml)
 	t.Chdir(worktree)
 	fakeBin := t.TempDir()
 	for _, name := range []string{"claude", "opencode"} {
@@ -988,7 +988,7 @@ func TestReviewSupplementaryDoesNotRegisterBlobs(t *testing.T) {
 func TestReviewRecordsAuthoritativeThenSupplementary(t *testing.T) {
 	worktree := cutoverRepository(t)
 	home := t.TempDir()
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), reviewAgentYml)
 	t.Chdir(worktree)
 	fakeBin := t.TempDir()
 	for _, name := range []string{"claude", "opencode"} {

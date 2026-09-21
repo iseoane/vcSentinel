@@ -132,12 +132,12 @@ func TestPurgeDoesNotRemoveAgedTemporaryWithPublicationLock(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCreateSnapshotPublicationHelper$")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
-		"VAS_SENTINEL_CREATE_SNAPSHOT_HELPER=1",
-		"VAS_SENTINEL_CREATE_SNAPSHOT_TREE="+tree,
-		"VAS_SENTINEL_REAL_GIT="+realGit,
-		"VAS_SENTINEL_GIT_SHIM_BLOCK_ADD=1",
-		"VAS_SENTINEL_GIT_SHIM_READY="+readyPath,
-		"VAS_SENTINEL_GIT_SHIM_RELEASE="+releasePath,
+		"VCSENTINEL_CREATE_SNAPSHOT_HELPER=1",
+		"VCSENTINEL_CREATE_SNAPSHOT_TREE="+tree,
+		"VCSENTINEL_REAL_GIT="+realGit,
+		"VCSENTINEL_GIT_SHIM_BLOCK_ADD=1",
+		"VCSENTINEL_GIT_SHIM_READY="+readyPath,
+		"VCSENTINEL_GIT_SHIM_RELEASE="+releasePath,
 		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	if err := cmd.Start(); err != nil {
@@ -189,8 +189,8 @@ func TestPurgeDoesNotRemoveAgedTemporaryWithPublicationLock(t *testing.T) {
 }
 
 func TestCreateSnapshotPublicationHelper(t *testing.T) {
-	if os.Getenv("VAS_SENTINEL_CREATE_SNAPSHOT_HELPER") == "1" {
-		if _, err := CreateSnapshot(os.Getenv("VAS_SENTINEL_CREATE_SNAPSHOT_TREE")); err != nil {
+	if os.Getenv("VCSENTINEL_CREATE_SNAPSHOT_HELPER") == "1" {
+		if _, err := CreateSnapshot(os.Getenv("VCSENTINEL_CREATE_SNAPSHOT_TREE")); err != nil {
 			os.Exit(2)
 		}
 	}
@@ -302,8 +302,8 @@ func TestPurgeCleansSidecarsWhenPruneFails(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("VAS_SENTINEL_REAL_GIT", realGit)
-	t.Setenv("VAS_SENTINEL_GIT_SHIM_FAIL", "1")
+	t.Setenv("VCSENTINEL_REAL_GIT", realGit)
+	t.Setenv("VCSENTINEL_GIT_SHIM_FAIL", "1")
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	if err := PurgeSnapshots(SnapshotRetention); err == nil {
@@ -333,10 +333,10 @@ import (
 
 func main() {
 	args := os.Args[1:]
-	if os.Getenv("VAS_SENTINEL_GIT_SHIM_FAIL") == "1" && len(args) >= 2 && args[0] == "worktree" && (args[1] == "repair" || args[1] == "prune") {
+	if os.Getenv("VCSENTINEL_GIT_SHIM_FAIL") == "1" && len(args) >= 2 && args[0] == "worktree" && (args[1] == "repair" || args[1] == "prune") {
 		os.Exit(42)
 	}
-	cmd := exec.Command(os.Getenv("VAS_SENTINEL_REAL_GIT"), args...)
+	cmd := exec.Command(os.Getenv("VCSENTINEL_REAL_GIT"), args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -344,12 +344,12 @@ func main() {
 		}
 		os.Exit(1)
 	}
-	if os.Getenv("VAS_SENTINEL_GIT_SHIM_BLOCK_ADD") == "1" && len(args) >= 2 && args[0] == "worktree" && args[1] == "add" {
-		if err := os.WriteFile(os.Getenv("VAS_SENTINEL_GIT_SHIM_READY"), nil, 0600); err != nil {
+	if os.Getenv("VCSENTINEL_GIT_SHIM_BLOCK_ADD") == "1" && len(args) >= 2 && args[0] == "worktree" && args[1] == "add" {
+		if err := os.WriteFile(os.Getenv("VCSENTINEL_GIT_SHIM_READY"), nil, 0600); err != nil {
 			os.Exit(3)
 		}
 		for {
-			if _, err := os.Stat(os.Getenv("VAS_SENTINEL_GIT_SHIM_RELEASE")); err == nil {
+			if _, err := os.Stat(os.Getenv("VCSENTINEL_GIT_SHIM_RELEASE")); err == nil {
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
@@ -472,7 +472,7 @@ func writeSnapshotHolders(t *testing.T, tree string, pids ...int) {
 func processThatExited(t *testing.T) int {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestSnapshotExitedProcessHelper$")
-	cmd.Env = append(os.Environ(), "VAS_SENTINEL_SNAPSHOT_EXIT_HELPER=1")
+	cmd.Env = append(os.Environ(), "VCSENTINEL_SNAPSHOT_EXIT_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func processThatExited(t *testing.T) int {
 }
 
 func TestSnapshotExitedProcessHelper(t *testing.T) {
-	if os.Getenv("VAS_SENTINEL_SNAPSHOT_EXIT_HELPER") == "1" {
+	if os.Getenv("VCSENTINEL_SNAPSHOT_EXIT_HELPER") == "1" {
 		os.Exit(1)
 	}
 }

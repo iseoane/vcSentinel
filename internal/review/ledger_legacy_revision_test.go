@@ -17,7 +17,7 @@ func TestLegacyLedgerRevisionRemainsReadable(t *testing.T) {
 	t.Helper()
 	gitDir := t.TempDir()
 	ledger := NewLedger(gitDir)
-	if err := os.MkdirAll(filepath.Join(gitDir, "vas-sentinel"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(gitDir, "vcsentinel"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 

@@ -15,7 +15,7 @@ agents:
   claude:
     model: "claude-5-sonnet"
     reasoning_effort: "high"
-    # 'commit' profile ('sentinel slice' commit messages): low reasoning
+    # 'commit' profile ('vcsentinel slice' commit messages): low reasoning
     # because naming a commit does not need the reasoning of the rest of the
     # task. Example (uncomment and adjust):
     # profiles:
@@ -36,9 +36,9 @@ agents:
 // real effect. Only what the user uncomments here overrides the global
 // config for this repo.
 const perProjectConfigTemplate = `version: "1.0"
-# Per-project VAS Sentinel configuration. Override here only what this repo
-# needs different from your global config (~/.vas_sentinel/vassentinel.yml,
-# created by 'sentinel install'). Anything you do not define is resolved from
+# Per-project vcSentinel configuration. Override here only what this repo
+# needs different from your global config (~/.vcsentinel/vcsentinel.yml,
+# created by 'vcsentinel install'). Anything you do not define is resolved from
 # there.
 #
 # Deterministic verification WITHOUT agent: if you define these lists, 'pr
@@ -64,14 +64,14 @@ const perProjectConfigTemplate = `version: "1.0"
 #     standard: [unit_test]
 #   mode: worktree
 #
-# Commit message language for 'sentinel slice'. Defaults to
+# Commit message language for 'vcsentinel slice'. Defaults to
 # "en". Without pinning it, the agent picked at random and mixed languages
 # within the same fragmentation.
 # commit_language: "en"
 #
 # Repository request: allows external semantic generation, but it is NOT
 # personal consent. The local unversioned grant is also required via
-# 'sentinel consent-diff grant'.
+# 'vcsentinel consent-diff grant'.
 request_external_agent_diff: false
 #
 # CodeGraph context for the reviewer: only metadata of affected test paths.
@@ -88,7 +88,7 @@ review:
 #     profiles:
 #       commit:
 #         reasoning_effort: "low"
-# (The 'commit' profile defines the model/effort that 'sentinel slice' uses to
+# (The 'commit' profile defines the model/effort that 'vcsentinel slice' uses to
 # generate commit messages; if you do not define it, the base model/effort of
 # the agent is used with no behavior change.)
 `
@@ -253,7 +253,7 @@ func goBinaryName() string {
 }
 
 func windowsBinaryPath(homeDir string) string {
-	return filepath.Join(homeDir, ".vas_sentinel", "bin", "vcsentinel.exe")
+	return filepath.Join(homeDir, ".vcsentinel", "bin", "vcsentinel.exe")
 }
 
 func installWindows(tmpPath string) (string, error) {
@@ -262,7 +262,7 @@ func installWindows(tmpPath string) (string, error) {
 		return "", fmt.Errorf("could not identify the user's home directory: %w", err)
 	}
 
-	dir := filepath.Join(homeDir, ".vas_sentinel", "bin")
+	dir := filepath.Join(homeDir, ".vcsentinel", "bin")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("could not create the directory %s: %w", dir, err)
 	}
@@ -386,7 +386,7 @@ func addShellPathBlock() error {
 			continue
 		}
 
-		block := fmt.Sprintf("\n# VAS Sentinel\nexport PATH=\"/usr/local/bin:$PATH\"\n")
+		block := fmt.Sprintf("\n# vcSentinel\nexport PATH=\"/usr/local/bin:$PATH\"\n")
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("could not update %s: %w", path, err)
@@ -407,15 +407,15 @@ func fileExists(path string) bool {
 }
 
 // IsInitialized reports whether the worktree has the per-project
-// configuration (.vas_sentinel/vassentinel.yml), that is, whether it already
-// went through 'sentinel init'.
+// configuration (.vcsentinel/vcsentinel.yml), that is, whether it already
+// went through 'vcsentinel init'.
 func IsInitialized(worktreePath string) bool {
-	path := filepath.Join(worktreePath, ".vas_sentinel", "vassentinel.yml")
+	path := filepath.Join(worktreePath, ".vcsentinel", "vcsentinel.yml")
 	return fileExists(path)
 }
 
 // createGlobalConfig materializes the global configuration file in
-// ~/.vas_sentinel/vassentinel.yml if it does not exist yet. It does not
+// ~/.vcsentinel/vcsentinel.yml if it does not exist yet. It does not
 // overwrite it.
 func createGlobalConfig() error {
 	homeDir, err := os.UserHomeDir()
@@ -423,12 +423,12 @@ func createGlobalConfig() error {
 		return fmt.Errorf("could not identify the user's home directory: %w", err)
 	}
 
-	dir := filepath.Join(homeDir, ".vas_sentinel")
+	dir := filepath.Join(homeDir, ".vcsentinel")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("could not create the directory %s: %w", dir, err)
 	}
 
-	path := filepath.Join(dir, "vassentinel.yml")
+	path := filepath.Join(dir, "vcsentinel.yml")
 	if fileExists(path) {
 		return nil
 	}
@@ -439,10 +439,10 @@ func createGlobalConfig() error {
 }
 
 // CreatePerProjectConfig materializes the per-project configuration file in
-// <worktree>/.vas_sentinel/vassentinel.yml if it does not exist yet. It does
+// <worktree>/.vcsentinel/vcsentinel.yml if it does not exist yet. It does
 // not overwrite it.
 func CreatePerProjectConfig(worktreePath string) error {
-	path := filepath.Join(worktreePath, ".vas_sentinel", "vassentinel.yml")
+	path := filepath.Join(worktreePath, ".vcsentinel", "vcsentinel.yml")
 	if fileExists(path) {
 		return nil
 	}

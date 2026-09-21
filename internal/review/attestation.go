@@ -7,23 +7,23 @@ import (
 	"strings"
 )
 
-const attestationMarker = "<!-- vas-sentinel-attestation:"
+const attestationMarker = "<!-- vcsentinel-attestation:"
 const attestationSchemaVersion = "v1"
 
 var (
-	// ErrAttestationAbsent means that a PR body does not contain a Sentinel
+	// ErrAttestationAbsent means that a PR body does not contain a vcSentinel
 	// attestation. Callers must distinguish this from a malformed attestation:
 	// the former has not been authored, while the latter must not be trusted.
-	ErrAttestationAbsent = errors.New("vas-sentinel attestation is absent")
+	ErrAttestationAbsent = errors.New("vcsentinel attestation is absent")
 	// ErrInvalidAttestation means that the marker exists but its JSON payload is
 	// not a valid Attestation document.
-	ErrInvalidAttestation = errors.New("vas-sentinel attestation is invalid")
+	ErrInvalidAttestation = errors.New("vcsentinel attestation is invalid")
 	// ErrUnsupportedAttestationSchema means the reader found a schema it does
 	// not understand and therefore cannot safely interpret.
-	ErrUnsupportedAttestationSchema = errors.New("vas-sentinel attestation schema is unsupported")
+	ErrUnsupportedAttestationSchema = errors.New("vcsentinel attestation schema is unsupported")
 	// ErrMultipleAttestations prevents a body from making the reader silently
 	// choose between competing machine claims.
-	ErrMultipleAttestations = errors.New("multiple vas-sentinel attestations")
+	ErrMultipleAttestations = errors.New("multiple vcsentinel attestations")
 )
 
 // Attestation is the machine-readable summary authored by pr review. Piece 5
@@ -52,7 +52,7 @@ func RenderAttestation(attestation Attestation) (string, error) {
 	return attestationMarker + attestationSchemaVersion + " " + string(payload) + " -->", nil
 }
 
-// ParseAttestation reads exactly one Sentinel machine attestation from body.
+// ParseAttestation reads exactly one vcSentinel machine attestation from body.
 // It rejects multiple markers rather than taking the first because selecting a
 // machine claim from conflicting claims would make pr create non-deterministic.
 func ParseAttestation(body string) (Attestation, error) {

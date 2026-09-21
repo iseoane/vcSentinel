@@ -44,7 +44,7 @@ func (s pipelineStep) render() string {
 // on disk. The step itself never disappears: a reader must still see that it
 // ran, and what its outcome was.
 func (s pipelineStep) omitted() pipelineStep {
-	s.Evidence = "_Evidence omitted for size; the full log is under .vas_sentinel/evidence/._\n"
+	s.Evidence = "_Evidence omitted for size; the full log is under .vcsentinel/evidence/._\n"
 	s.dropped = true
 	return s
 }
@@ -120,7 +120,7 @@ func truncationNotice(omitted int) string {
 	if omitted == 0 {
 		return ""
 	}
-	return fmt.Sprintf("_%d evidence blocks omitted for size; the full logs are under .vas_sentinel/evidence/._\n", omitted)
+	return fmt.Sprintf("_%d evidence blocks omitted for size; the full logs are under .vcsentinel/evidence/._\n", omitted)
 }
 
 func hasCIStep(steps []pipelineStep) bool {

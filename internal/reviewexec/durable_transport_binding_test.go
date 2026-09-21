@@ -37,10 +37,10 @@ func bindingRecord(t *testing.T, backing *store.Store, candidateRaw, prompt stri
 }
 
 // bindingRequestPath rebuilds the durable request.json path from the store
-// root passed to NewStore, which appends vas-sentinel itself.
+// root passed to NewStore, which appends vcsentinel itself.
 func bindingRequestPath(t *testing.T, root, runID string) string {
 	t.Helper()
-	return filepath.Join(root, "vas-sentinel", "executions", "v1", runID, "request.json")
+	return filepath.Join(root, "vcsentinel", "executions", "v1", runID, "request.json")
 }
 
 func TestBindSnapshotAdmitsCoherentSnapshot(t *testing.T) {

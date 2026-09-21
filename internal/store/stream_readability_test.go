@@ -127,7 +127,7 @@ func writeLegacyJSONL(t *testing.T, path string, frames []EventFrame) {
 // keeps reading forever.
 func TestPreR9StreamRemainsReadable(t *testing.T) {
 	commonDir := t.TempDir()
-	root := filepath.Join(commonDir, "vas-sentinel")
+	root := filepath.Join(commonDir, "vcsentinel")
 	seedLegacyRunDirectory(t, root)
 	st := NewStore(commonDir)
 

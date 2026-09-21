@@ -76,7 +76,7 @@ func TestReadDispositionsRejectsCorruptPersistence(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			path := filepath.Join(dir, "vas-sentinel", "dispositions.jsonl")
+			path := filepath.Join(dir, "vcsentinel", "dispositions.jsonl")
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -105,7 +105,7 @@ func TestReadDispositionsUsesTheWriteSchema(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			path := filepath.Join(dir, "vas-sentinel", "dispositions.jsonl")
+			path := filepath.Join(dir, "vcsentinel", "dispositions.jsonl")
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				t.Fatal(err)
 			}

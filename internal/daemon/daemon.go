@@ -1,5 +1,5 @@
 // Package daemon implements the repository-local daemon for D2: an
-// exclusive owner claim stored under <git-common-dir>/vas-sentinel/daemon/,
+// exclusive owner claim stored under <git-common-dir>/vcsentinel/daemon/,
 // stale detection through pid liveness behind a platform seam,
 // deterministic reclaim, inspection, and self-release (slice 1), plus the
 // repository-local transport of slice 2a — framed JSON connections over a
@@ -91,14 +91,14 @@ type Owner struct {
 	ProtocolRevision int       `json:"protocol_revision"`
 }
 
-// daemonDir returns <git-common-dir>/vas-sentinel/daemon, mirroring how
-// store anchors its root at <git-common-dir>/vas-sentinel.
+// daemonDir returns <git-common-dir>/vcsentinel/daemon, mirroring how
+// store anchors its root at <git-common-dir>/vcsentinel.
 func daemonDir(gitCommonDir string) string {
-	return filepath.Join(gitCommonDir, "vas-sentinel", "daemon")
+	return filepath.Join(gitCommonDir, "vcsentinel", "daemon")
 }
 
 // Dir is the exported spelling of the repository daemon directory:
-// <git-common-dir>/vas-sentinel/daemon. CLI discovery (endpoint.json
+// <git-common-dir>/vcsentinel/daemon. CLI discovery (endpoint.json
 // resolution) and the package itself must agree on this single location, so
 // callers join through this helper instead of re-deriving the layout.
 func Dir(gitCommonDir string) string {

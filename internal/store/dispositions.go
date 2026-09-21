@@ -13,7 +13,7 @@ import (
 )
 
 // dispositionsFile is the append-only log of human finding dispositions,
-// beside decisions.jsonl under <gitCommonDir>/vas-sentinel. It is separate
+// beside decisions.jsonl under <gitCommonDir>/vcsentinel. It is separate
 // from the immutable review revisions by design: answering a finding never
 // rewrites the revision that reported it.
 const dispositionsFile = "dispositions.jsonl"

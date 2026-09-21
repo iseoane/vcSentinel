@@ -1,4 +1,4 @@
-// Package store implements VAS Sentinel's persistent storage for T2.5
+// Package store implements vcSentinel's persistent storage for T2.5
 // (F2): units, runs, findings, commits, decisions, and PR-review entries,
 // anchored in the repository's git common dir (shared across linked
 // worktrees from day one). It coexists with internal/review.Ledger without
@@ -20,19 +20,19 @@ const (
 	subdirCommits  = "commits"
 )
 
-// Store gives access to storage keyed by id inside <gitCommonDir>/vas-sentinel.
+// Store gives access to storage keyed by id inside <gitCommonDir>/vcsentinel.
 type Store struct {
 	dir string
 }
 
-// NewStore creates a store anchored to <gitCommonDir>/vas-sentinel. The
+// NewStore creates a store anchored to <gitCommonDir>/vcsentinel. The
 // caller is responsible for passing the result of git.GetGitCommonDir
 // (not GetGitDir) so that the store is shared across linked worktrees;
 // the store itself does not enforce that choice, just as review.NewLedger
 // does not either. It does not create the directory: that happens on the
 // first write.
 func NewStore(gitCommonDir string) *Store {
-	return &Store{dir: filepath.Join(gitCommonDir, "vas-sentinel")}
+	return &Store{dir: filepath.Join(gitCommonDir, "vcsentinel")}
 }
 
 // decisionsPath returns the path of the append-only decisions file.

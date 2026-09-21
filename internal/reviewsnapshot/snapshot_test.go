@@ -586,7 +586,7 @@ func TestCreateReapsAbandonedSnapshots(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TMPDIR", root)
 
-	abandoned := filepath.Join(root, "vas-sentinel-review-abandonado")
+	abandoned := filepath.Join(root, "vcsentinel-review-abandonado")
 	if err := os.MkdirAll(filepath.Join(abandoned, "sub"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +594,7 @@ func TestCreateReapsAbandonedSnapshots(t *testing.T) {
 	if err := os.Chtimes(abandoned, staleTime, staleTime); err != nil {
 		t.Fatal(err)
 	}
-	inProgress := filepath.Join(root, "vas-sentinel-review-en-curso")
+	inProgress := filepath.Join(root, "vcsentinel-review-en-curso")
 	if err := os.MkdirAll(inProgress, 0o700); err != nil {
 		t.Fatal(err)
 	}

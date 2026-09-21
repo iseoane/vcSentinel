@@ -14,12 +14,6 @@ import (
 // existing one.
 var markedVolumeRulesPattern = regexp.MustCompile(markedBlockPattern())
 
-// legacyVolumeRulesPattern recognizes the EXACT block (without markers) that
-// versions before the markers injected. It is kept only to detect and
-// remove/migrate those existing blocks; no version from this one on ever
-// writes this format again.
-var legacyVolumeRulesPattern = regexp.MustCompile(blockPattern(legacyVolumeRules))
-
 func markedBlockPattern() string {
 	header := blockPattern("\n" + markerBegin + "\n")
 	tail := blockPattern("\n" + markerEnd + "\n")
@@ -46,20 +40,16 @@ func blockPattern(block string) string {
 	return strings.Join(parts, "\r?\n")
 }
 
-// containsVolumeRules reports whether the file already carries the block,
-// marked (from this version or a future one sharing the markers) or legacy
-// (from a version before the markers), whatever the mix of line endings it
-// was written with.
+// containsVolumeRules reports whether the file already carries a marked
+// vcSentinel block, whatever the mix of line endings it was written with.
 func containsVolumeRules(content string) bool {
-	return markedVolumeRulesPattern.MatchString(content) || legacyVolumeRulesPattern.MatchString(content)
+	return markedVolumeRulesPattern.MatchString(content)
 }
 
-// removeVolumeRules removes ALL occurrences of the block, marked or legacy,
-// and leaves the rest of the file byte for byte as it was, including its line
-// endings.
+// removeVolumeRules removes all marked blocks and leaves the rest of the file
+// byte for byte as it was, including its line endings.
 func removeVolumeRules(content string) string {
-	content = removeAllMatches(markedVolumeRulesPattern, content)
-	return removeAllMatches(legacyVolumeRulesPattern, content)
+	return removeAllMatches(markedVolumeRulesPattern, content)
 }
 
 // removeAllMatches applies the pattern until the result stops changing (fixed

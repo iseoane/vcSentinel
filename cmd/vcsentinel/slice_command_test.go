@@ -46,7 +46,7 @@ func (a *adapterSlicePlanFake) RunPrompt(prompt string) (string, error) {
 func TestRunSlicePlanWithConsentUsesAdapterWithDiffNotBaseMethod(t *testing.T) {
 	prepareRepoForPlan(t)
 	writeDiffRequest(t, true)
-	for _, args := range [][]string{{"add", ".vas_sentinel/vassentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
+	for _, args := range [][]string{{"add", ".vcsentinel/vcsentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
 		if err := exec.Command("git", args...).Run(); err != nil {
 			t.Fatal(err)
 		}
@@ -283,11 +283,11 @@ func prepareRepoForPlan(t *testing.T) {
 
 func writeDiffRequest(t *testing.T, allowed bool) {
 	t.Helper()
-	if err := os.MkdirAll(".vas_sentinel", 0755); err != nil {
+	if err := os.MkdirAll(".vcsentinel", 0755); err != nil {
 		t.Fatal(err)
 	}
 	content := fmt.Sprintf("request_external_agent_diff: %t\n", allowed)
-	if err := os.WriteFile(filepath.Join(".vas_sentinel", "vassentinel.yml"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(".vcsentinel", "vcsentinel.yml"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -295,7 +295,7 @@ func writeDiffRequest(t *testing.T, allowed bool) {
 func grantExternalDiffForPlan(t *testing.T) {
 	t.Helper()
 	writeDiffRequest(t, true)
-	for _, args := range [][]string{{"add", ".vas_sentinel/vassentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
+	for _, args := range [][]string{{"add", ".vcsentinel/vcsentinel.yml"}, {"commit", "-m", "chore: request external diff"}} {
 		if err := exec.Command("git", args...).Run(); err != nil {
 			t.Fatal(err)
 		}

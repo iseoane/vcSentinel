@@ -551,11 +551,11 @@ func TestMetricsSubprocessDispatchAndInitialization(t *testing.T) {
 }
 
 func TestMetricsCLIHelper(t *testing.T) {
-	if os.Getenv("VAS_SENTINEL_METRICS_HELPER") != "1" {
+	if os.Getenv("VCSENTINEL_METRICS_HELPER") != "1" {
 		return
 	}
 	var args []string
-	if err := json.Unmarshal([]byte(os.Getenv("VAS_SENTINEL_METRICS_ARGS")), &args); err != nil {
+	if err := json.Unmarshal([]byte(os.Getenv("VCSENTINEL_METRICS_ARGS")), &args); err != nil {
 		t.Fatal(err)
 	}
 	os.Args = append([]string{"vcsentinel"}, args...)
@@ -570,7 +570,7 @@ func runMetricsCLI(t *testing.T, repo string, args ...string) (string, string, e
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestMetricsCLIHelper$")
 	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "VAS_SENTINEL_METRICS_HELPER=1", "VAS_SENTINEL_METRICS_ARGS="+string(raw))
+	cmd.Env = append(os.Environ(), "VCSENTINEL_METRICS_HELPER=1", "VCSENTINEL_METRICS_ARGS="+string(raw))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err = cmd.Run()
@@ -590,7 +590,7 @@ func processExitCode(err error) int {
 
 func initializeMetricsRepository(t *testing.T, repo string) {
 	t.Helper()
-	path := filepath.Join(repo, ".vas_sentinel", "vassentinel.yml")
+	path := filepath.Join(repo, ".vcsentinel", "vcsentinel.yml")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +681,7 @@ func writeMixedMetrics(t *testing.T, common string) {
 
 func writeCorruptMetrics(t *testing.T, common string) {
 	t.Helper()
-	path := filepath.Join(common, "vas-sentinel", "metrics", "v1", "corrupt.json")
+	path := filepath.Join(common, "vcsentinel", "metrics", "v1", "corrupt.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}

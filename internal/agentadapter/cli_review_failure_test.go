@@ -18,7 +18,7 @@ const claudeErrorStdout = `{"type":"result","subtype":"error_during_execution","
 // result on stdout must surface that result's message instead of collapsing
 // to the bare exit status.
 func TestRunReviewSurfacesClaudeStdoutOnEmptyStderr(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_STDOUT_FAIL", claudeErrorStdout)
+	t.Setenv("VCSENTINEL_TEST_STDOUT_FAIL", claudeErrorStdout)
 	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 10 * time.Second}
 
 	_, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: t.TempDir()}, 10*time.Second)
@@ -50,9 +50,9 @@ func TestRunReviewKeepsBareExitWhenStdoutUnusable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.silentOne {
-				t.Setenv("VAS_SENTINEL_TEST_EXIT_ONE", "1")
+				t.Setenv("VCSENTINEL_TEST_EXIT_ONE", "1")
 			} else {
-				t.Setenv("VAS_SENTINEL_TEST_STDOUT_FAIL", tc.stdout)
+				t.Setenv("VCSENTINEL_TEST_STDOUT_FAIL", tc.stdout)
 			}
 			adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 10 * time.Second}
 
@@ -71,8 +71,8 @@ func TestRunReviewKeepsBareExitWhenStdoutUnusable(t *testing.T) {
 // non-empty stderr keeps today's text unchanged, with stdout only as the
 // fallback when stderr yields nothing.
 func TestRunReviewPrefersStderrOverClaudeStdout(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_FAIL", "authentication expired")
-	t.Setenv("VAS_SENTINEL_TEST_STDOUT_FAIL", claudeErrorStdout)
+	t.Setenv("VCSENTINEL_TEST_FAIL", "authentication expired")
+	t.Setenv("VCSENTINEL_TEST_STDOUT_FAIL", claudeErrorStdout)
 	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 10 * time.Second}
 
 	_, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: t.TempDir()}, 10*time.Second)
@@ -92,8 +92,8 @@ func TestRunReviewPrefersStderrOverClaudeStdout(t *testing.T) {
 // context.DeadlineExceeded) stays true end to end, because reviewexec's
 // classifier depends on it to record a timeout rather than a failure.
 func TestRunReviewTimeoutSurfacesClaudeStdoutKeepsDeadline(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_STDOUT_FAIL", claudeErrorStdout)
-	t.Setenv("VAS_SENTINEL_TEST_SLEEP", "30")
+	t.Setenv("VCSENTINEL_TEST_STDOUT_FAIL", claudeErrorStdout)
+	t.Setenv("VCSENTINEL_TEST_SLEEP", "30")
 	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 200 * time.Millisecond}
 
 	_, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: t.TempDir()}, 200*time.Millisecond)
@@ -117,7 +117,7 @@ func TestRunReviewTimeoutSurfacesClaudeStdoutKeepsDeadline(t *testing.T) {
 // rather than inventing a second rule.
 func TestRunReviewBoundsClaudeStdoutDetail(t *testing.T) {
 	long := strings.Repeat("x", 500)
-	t.Setenv("VAS_SENTINEL_TEST_STDOUT_FAIL", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"`+long+`"}`)
+	t.Setenv("VCSENTINEL_TEST_STDOUT_FAIL", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"`+long+`"}`)
 	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 10 * time.Second}
 
 	_, err := adapter.runBoundedReview(context.Background(), ReviewRequest{Prompt: "audit", SnapshotDir: t.TempDir()}, 10*time.Second)

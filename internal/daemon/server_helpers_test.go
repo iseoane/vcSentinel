@@ -31,7 +31,7 @@ func testStartEnvelope() execution.StartRequest {
 
 const (
 	testPrincipal       = "test-principal"
-	testFingerprintRoot = "/vas-sentinel-wire-test-repo"
+	testFingerprintRoot = "/vcsentinel-wire-test-repo"
 )
 
 // funcAdapter turns closures into execution.Adapter implementations.

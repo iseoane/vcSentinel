@@ -102,7 +102,7 @@ func TestRenderPRReviewBodyUsesTheFixedSectionOrder(t *testing.T) {
 		"Persists the branch review entry.",
 		"✅ `go vet ./...` (exit 0)",
 		"✅ `go test ./...` (exit 0)",
-		"<!-- vas-sentinel-attestation:v1",
+		"<!-- vcsentinel-attestation:v1",
 		"<b>review</b>",
 		RenderMatrix([]Record{recordHelper("abc123", "feat(review): persist review", "test", revisionHelper(VerdictOK, DimensionResult{Dim: DimSpec, Verdict: VerdictOK}))}),
 	} {

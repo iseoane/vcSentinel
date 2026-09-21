@@ -57,7 +57,7 @@ func TestConfigPrecedence(t *testing.T) {
 	})
 
 	t.Run("global applies when there is no per-project", func(t *testing.T) {
-		writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"),
+		writeConfig(t, filepath.Join(home, ".vcsentinel", "vcsentinel.yml"),
 			"active_agent: \"claude\"\n")
 		cfg := LoadLocalConfig(worktree)
 		if cfg.ActiveAgent != "claude" {
@@ -66,9 +66,9 @@ func TestConfigPrecedence(t *testing.T) {
 	})
 
 	t.Run("per-project wins over global", func(t *testing.T) {
-		writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"),
+		writeConfig(t, filepath.Join(home, ".vcsentinel", "vcsentinel.yml"),
 			"active_agent: \"claude\"\n")
-		writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+		writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 			"active_agent: \"opencode\"\n")
 		cfg := LoadLocalConfig(worktree)
 		if cfg.ActiveAgent != "opencode" {
@@ -77,9 +77,9 @@ func TestConfigPrecedence(t *testing.T) {
 	})
 
 	t.Run("per-project overwrites only the fields it defines", func(t *testing.T) {
-		writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"),
+		writeConfig(t, filepath.Join(home, ".vcsentinel", "vcsentinel.yml"),
 			"agents:\n  claude:\n    model: \"claude-global\"\n    reasoning_effort: \"low\"\n")
-		writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+		writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 			"agents:\n  claude:\n    model: \"claude-local\"\n")
 		cfg := LoadLocalConfig(worktree)
 		if cfg.Agents["claude"].Model != "claude-local" {
@@ -101,12 +101,12 @@ func TestRepositoryRequestsExternalAgentDiff(t *testing.T) {
 		t.Fatal("request_external_agent_diff must be false by default")
 	}
 
-	writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"),
+	writeConfig(t, filepath.Join(home, ".vcsentinel", "vcsentinel.yml"),
 		"request_external_agent_diff: true\n")
 	if RepositoryRequestsExternalAgentDiff(worktree) {
 		t.Fatal("global config must not request diffs from the repository")
 	}
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 		"request_external_agent_diff: true\n")
 	cfg = LoadLocalConfig(worktree)
 	if !cfg.RequestExternalAgentDiff || !RepositoryRequestsExternalAgentDiff(worktree) {
@@ -119,7 +119,7 @@ func TestCodeGraphReviewerContextIsOptIn(t *testing.T) {
 	if LoadLocalConfig(worktree).Review.CodeGraphContext {
 		t.Fatal("CodeGraph reviewer context must be disabled by default")
 	}
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), "review:\n  codegraph_context: true\n")
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), "review:\n  codegraph_context: true\n")
 	if !LoadLocalConfig(worktree).Review.CodeGraphContext {
 		t.Fatal("review.codegraph_context was not applied")
 	}
@@ -141,7 +141,7 @@ func TestConfigChangeClasses(t *testing.T) {
 	})
 
 	t.Run("user change.classes replaces the defaults preserving order", func(t *testing.T) {
-		writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+		writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 			"change:\n  classes:\n    infra: [\"**/*.tf\"]\n    docs: [\"**/*.md\"]\n")
 		cfg := LoadLocalConfig(worktree)
 		if len(cfg.Change) != 2 {
@@ -157,7 +157,7 @@ func TestConfigChangeClasses(t *testing.T) {
 	// changes" because the code only looked at len(classes) == 0 (finding of
 	// the T3.1 review, internal/config/parser.go:598).
 	t.Run("explicit empty change.classes empties the rules, unlike omitting it", func(t *testing.T) {
-		writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), "change:\n  classes: {}\n")
+		writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), "change:\n  classes: {}\n")
 		cfg := LoadLocalConfig(worktree)
 		if cfg.Change == nil || len(cfg.Change) != 0 {
 			t.Fatalf("expected Change empty-but-declared (not nil), got %#v", cfg.Change)
@@ -171,7 +171,7 @@ func TestConfigChangeClasses(t *testing.T) {
 		home2 := t.TempDir()
 		worktree2 := t.TempDir()
 		setHome(t, home2)
-		writeConfig(t, filepath.Join(home2, ".vas_sentinel", "vassentinel.yml"), "change:\n  classes: {}\n")
+		writeConfig(t, filepath.Join(home2, ".vcsentinel", "vcsentinel.yml"), "change:\n  classes: {}\n")
 
 		cfg := LoadLocalConfig(worktree2)
 		if cfg.Change == nil || len(cfg.Change) != 0 {
@@ -190,13 +190,13 @@ func TestConfigRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("globalConfigPath failed: %v", err)
 	}
-	expectedGlobal := filepath.Join(home, ".vas_sentinel", "vassentinel.yml")
+	expectedGlobal := filepath.Join(home, ".vcsentinel", "vcsentinel.yml")
 	if globalPath != expectedGlobal {
 		t.Errorf("expected global path %q, got %q", expectedGlobal, globalPath)
 	}
 
 	localPath := perProjectConfigPath(worktree)
-	expectedLocal := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	expectedLocal := filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml")
 	if localPath != expectedLocal {
 		t.Errorf("expected per-project path %q, got %q", expectedLocal, localPath)
 	}

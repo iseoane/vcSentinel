@@ -216,7 +216,7 @@ func verifyInternal(opts VerifyOptions) (VerificationResult, error) {
 // the PR).
 func verificationNoticeText(ciDetected bool) string {
 	var b strings.Builder
-	b.WriteString("No verification commands are configured (lint_commands/test_commands/build_commands in vassentinel.yml).\n")
+	b.WriteString("No verification commands are configured (lint_commands/test_commands/build_commands in vcsentinel.yml).\n")
 	if ciDetected {
 		b.WriteString("CI was detected in the repository: the PR will have external automatic verification.\n")
 	} else {
@@ -231,7 +231,7 @@ func verificationNoticeText(ciDetected bool) string {
 // delegation needs a free shell and is a dedicated step after the review.
 // It returns the tested contract with the executed commands.
 func verificationPrompt() string {
-	return "You are the verification step of VAS Sentinel.\n" +
+	return "You are the verification step of vcSentinel.\n" +
 		"You have a free shell: discover the project's tests (Makefile, go.mod, scripts, language conventions) and run them.\n" +
 		"Return ONLY one final line with the tested contract, with the executed commands separated by ;:\n" +
 		"tested: <command>; <command>\n" +

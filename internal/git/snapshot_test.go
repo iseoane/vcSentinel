@@ -281,9 +281,9 @@ func TestAcquireSnapshotLockReleasedAfterProcessExit(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestSnapshotLockHelper$")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
-		"VAS_SENTINEL_SNAPSHOT_LOCK_HELPER=1",
-		"VAS_SENTINEL_SNAPSHOT_LOCK_TREE="+tree,
-		"VAS_SENTINEL_SNAPSHOT_LOCK_READY="+readyPath,
+		"VCSENTINEL_SNAPSHOT_LOCK_HELPER=1",
+		"VCSENTINEL_SNAPSHOT_LOCK_TREE="+tree,
+		"VCSENTINEL_SNAPSHOT_LOCK_READY="+readyPath,
 	)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -339,14 +339,14 @@ func TestAcquireSnapshotLockReleasedAfterProcessExit(t *testing.T) {
 }
 
 func TestSnapshotLockHelper(t *testing.T) {
-	if os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_HELPER") != "1" {
+	if os.Getenv("VCSENTINEL_SNAPSHOT_LOCK_HELPER") != "1" {
 		return
 	}
-	path, release, err := AcquireSnapshot(os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_TREE"))
+	path, release, err := AcquireSnapshot(os.Getenv("VCSENTINEL_SNAPSHOT_LOCK_TREE"))
 	if err != nil {
 		os.Exit(2)
 	}
-	readyPath := os.Getenv("VAS_SENTINEL_SNAPSHOT_LOCK_READY")
+	readyPath := os.Getenv("VCSENTINEL_SNAPSHOT_LOCK_READY")
 	tempPath := readyPath + ".tmp"
 	if err := os.WriteFile(tempPath, []byte(path), 0600); err != nil {
 		os.Exit(3)

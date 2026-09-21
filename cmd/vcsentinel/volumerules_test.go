@@ -161,20 +161,18 @@ func TestInjectOnLFFileKeepsUsingLF(t *testing.T) {
 	}
 }
 
-// TestInjectMigratesDuplicateLegacyBlock reproduces the EXACT case this
-// repo's .claudecode.md has today: two copies of the legacy block (without
-// markers), the fruit of a binary older than the idempotency fix. init must
-// migrate it: remove both legacy copies and leave a single marked block.
-func TestInjectMigratesDuplicateLegacyBlock(t *testing.T) {
+// TestInjectRemovesDuplicateMarkedBlocks proves adjacent managed blocks
+// collapse to one current marked block.
+func TestInjectRemovesDuplicateMarkedBlocks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".claudecode.md")
-	writeTestFile(t, path, "# Guide\n"+legacyVolumeRules+legacyVolumeRules)
+	writeTestFile(t, path, "# Guide\n"+volumeRules+volumeRules)
 
 	written, err := injectRulesIntoFile(path)
 	if err != nil {
 		t.Fatalf("injectRulesIntoFile returned an error: %v", err)
 	}
 	if !written {
-		t.Fatal("init did not migrate the duplicated legacy block")
+		t.Fatal("init did not collapse the duplicated marked block")
 	}
 
 	content := readTestFile(t, path)
@@ -196,20 +194,15 @@ func TestInjectMigratesDuplicateLegacyBlock(t *testing.T) {
 		t.Fatalf("second injection returned an error: %v", err)
 	}
 	if writtenAgain {
-		t.Error("init is not idempotent after the migration: it wrote again")
+		t.Error("init is not idempotent after collapsing duplicates: it wrote again")
 	}
 }
 
-// TestInjectMigratesLegacyBlockWithoutPriorContent covers this repo's real
-// case: a file whose ONLY content is two copies of the legacy block glued
-// from byte 0 (no prior line, so the first copy has no newline in front of
-// it). Before this test, the regex always required a "\r?\n" in front of the
-// block, so it left that first copy unrecognized: init migrated only the
-// second one and the file ended up with an orphan legacy block plus the new
-// marked block.
-func TestInjectMigratesLegacyBlockWithoutPriorContent(t *testing.T) {
+// TestInjectRemovesAdjacentMarkedBlocksAtFileStart covers a file whose only
+// content is two managed blocks glued from byte 0.
+func TestInjectRemovesAdjacentMarkedBlocksAtFileStart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".claudecode.md")
-	withoutLeadingNewline := strings.TrimPrefix(legacyVolumeRules, "\n")
+	withoutLeadingNewline := strings.TrimPrefix(volumeRules, "\n")
 	writeTestFile(t, path, toCRLF(withoutLeadingNewline+withoutLeadingNewline))
 
 	written, err := injectRulesIntoFile(path)
@@ -217,7 +210,7 @@ func TestInjectMigratesLegacyBlockWithoutPriorContent(t *testing.T) {
 		t.Fatalf("injectRulesIntoFile returned an error: %v", err)
 	}
 	if !written {
-		t.Fatal("init did not migrate the legacy block without prior content")
+		t.Fatal("init did not replace the adjacent marked blocks at file start")
 	}
 
 	content := readTestFile(t, path)
@@ -228,7 +221,7 @@ func TestInjectMigratesLegacyBlockWithoutPriorContent(t *testing.T) {
 		t.Errorf("expected exactly 1 occurrence of the rule, content: %q", content)
 	}
 	if strings.Contains(strings.ReplaceAll(content, "\r\n", ""), "\n") {
-		t.Errorf("migration changed a CRLF legacy-only file to LF: %q", content)
+		t.Errorf("replacement changed a CRLF marked-only file to LF: %q", content)
 	}
 }
 
@@ -261,10 +254,9 @@ func TestRemoveRemovesMarkedBlockWithOtherWording(t *testing.T) {
 	}
 }
 
-// TestRemoveRemovesLegacyAndMarkedMix covers a repo in mid-migration: a
-// legacy copy and a marked copy at the same time. uninit must remove both.
-func TestRemoveRemovesLegacyAndMarkedMix(t *testing.T) {
-	content := "# Guide\n" + legacyVolumeRules + volumeRules
+// TestRemoveRemovesAdjacentMarkedBlocks covers duplicate marked blocks.
+func TestRemoveRemovesAdjacentMarkedBlocks(t *testing.T) {
+	content := "# Guide\n" + volumeRules + volumeRules
 
 	remaining := removeVolumeRules(content)
 	if strings.Contains(remaining, "CRITICAL VOLUME RULE") {

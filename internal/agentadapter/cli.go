@@ -21,7 +21,7 @@ import (
 )
 
 // CommandTimeout is the limit of one call to the agent (300 s). Phase 1 makes
-// it configurable via review.timeout in vassentinel.yml; this is the fallback
+// it configurable via review.timeout in vcsentinel.yml; this is the fallback
 // when an adapter does not set Timeout.
 const CommandTimeout = 300 * time.Second
 
@@ -207,7 +207,7 @@ func (c *CLIAdapter) runCommitMessageCommand(prompt string) (string, error) {
 // external plugins. The micro-diff already travels in the prompt, so no
 // context is lost.
 func (c *CLIAdapter) prepareCommitCommand(ctx context.Context, prompt string) (*exec.Cmd, func(), error) {
-	dir, err := os.MkdirTemp("", "vas-sentinel-commit-")
+	dir, err := os.MkdirTemp("", "vcsentinel-commit-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create neutral directory for opencode: %w", err)
 	}
@@ -236,7 +236,7 @@ func (c *CLIAdapter) prepareCommitCommand(ctx context.Context, prompt string) (*
 // working directory only: local `claude --help` documents these flags, but no
 // integration test proves a live path matcher or an OS filesystem sandbox.
 func (c *CLIAdapter) prepareClaudeCommitCommand(ctx context.Context, prompt string) (*exec.Cmd, func(), error) {
-	dir, err := os.MkdirTemp("", "vas-sentinel-commit-")
+	dir, err := os.MkdirTemp("", "vcsentinel-commit-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("create neutral directory for claude: %w", err)
 	}
@@ -529,7 +529,7 @@ type openCodeReadPermissionRules struct {
 // and kill the turn, exactly the defect this branch exists to fix. The
 // captured provider streams from a full 31-invocation audit of this branch
 // show OpenCode issuing every read with an absolute path (e.g. filePath:
-// /tmp/vas-sentinel-review-<id>/internal/...), which these anchored forms
+// /tmp/vcsentinel-review-<id>/internal/...), which these anchored forms
 // already match, with zero truncations and zero denials across those 31
 // invocations. The warning is real in principle — OpenCode's own docs do not
 // guarantee absolute-only read paths — but not observed in practice.

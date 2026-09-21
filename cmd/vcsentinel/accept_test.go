@@ -199,7 +199,7 @@ func TestRunAcceptanceRefusesCorruptHistory(t *testing.T) {
 	if err := ledger.SaveRevision("abc12345", "message", "bucket", "model-a", refuteRecordFixture()); err != nil {
 		t.Fatalf("save revision: %v", err)
 	}
-	path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RecordPath("abc12345"))), "vas-sentinel", "dispositions.jsonl")
+	path := filepath.Join(filepath.Dir(filepath.Dir(ledger.RecordPath("abc12345"))), "vcsentinel", "dispositions.jsonl")
 	const corrupt = `{"sha":"abc12345","fingerprint":"fp-target","status":"ignored","actor":"human","source":"human"}` + "\n"
 	if err := os.WriteFile(path, []byte(corrupt), 0600); err != nil {
 		t.Fatal(err)

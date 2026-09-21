@@ -39,7 +39,7 @@ func TestStoreReadRunMissing(t *testing.T) {
 func TestStoreRunCorruptIsError(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	path := filepath.Join(dir, "vas-sentinel", subdirRuns, "r1.json")
+	path := filepath.Join(dir, "vcsentinel", subdirRuns, "r1.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}

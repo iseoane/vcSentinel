@@ -37,7 +37,7 @@ func TestRemoveShellPathBlock(t *testing.T) {
 	setHome(t, home)
 
 	const line = `export PATH="/usr/local/bin:$PATH"`
-	block := "\n# VAS Sentinel\n" + line + "\n"
+	block := "\n# vcSentinel\n" + line + "\n"
 	zshrc := filepath.Join(home, ".zshrc")
 
 	t.Run("removes the block from an existing file", func(t *testing.T) {
@@ -52,8 +52,8 @@ func TestRemoveShellPathBlock(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(content), "VAS Sentinel") {
-			t.Errorf("the VAS Sentinel block is still in the file:\n%s", content)
+		if strings.Contains(string(content), "vcSentinel") {
+			t.Errorf("the vcSentinel block is still in the file:\n%s", content)
 		}
 		if !strings.Contains(string(content), "export OLD=1") {
 			t.Errorf("content that must be kept was removed:\n%s", content)
@@ -81,8 +81,8 @@ func TestRemoveGlobalConfig(t *testing.T) {
 	home := t.TempDir()
 	setHome(t, home)
 
-	dir := filepath.Join(home, ".vas_sentinel")
-	path := filepath.Join(dir, "vassentinel.yml")
+	dir := filepath.Join(home, ".vcsentinel")
+	path := filepath.Join(dir, "vcsentinel.yml")
 
 	t.Run("removes the config and the empty directory", func(t *testing.T) {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -99,7 +99,7 @@ func TestRemoveGlobalConfig(t *testing.T) {
 			t.Errorf("the global config still exists: %v", err)
 		}
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Errorf("the .vas_sentinel directory was not removed after becoming empty: %v", err)
+			t.Errorf("the .vcsentinel directory was not removed after becoming empty: %v", err)
 		}
 	})
 

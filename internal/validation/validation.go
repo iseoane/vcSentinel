@@ -129,7 +129,7 @@ func RunProfile(profile string, opts RunOptions) ([]ValidationRun, error) {
 
 // validScopeElement is the whitelist of safe characters for a scope element
 // (Go package/path name): letters, digits, /, ., _, -. Unlike
-// Command/ScopedCommand (literals from the user's vassentinel.yml, trusted by
+// Command/ScopedCommand (literals from the user's vcsentinel.yml, trusted by
 // design, see agentshell.Run), the scope is computed at runtime and
 // interpolated unquoted into a command that later runs through sh -c/cmd /c:
 // any other character (;, `, $, " etc.) would allow injecting an arbitrary

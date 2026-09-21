@@ -15,7 +15,7 @@ func TestNewSections(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `
 agents:
   opencode:
     profiles:
@@ -88,7 +88,7 @@ func TestConfigLegacyAgents(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 		"active_agent: \"claude\"\nagents:\n  claude:\n    model: \"claude-legacy\"\n    reasoning_effort: \"high\"\n")
 
 	cfg := LoadLocalConfig(worktree)
@@ -107,7 +107,7 @@ func TestAgentOrderYml(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `
 agents:
   claude:
     model: "claude-x"
@@ -144,14 +144,14 @@ func TestAgentOrderPerProjectReorders(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(home, ".vcsentinel", "vcsentinel.yml"), `
 agents:
   claude:
     model: "claude-g"
   opencode:
     model: "opencode-g"
 `)
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), `
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), `
 agents:
   opencode:
     model: "opencode-l"
@@ -171,7 +171,7 @@ func TestInvalidTimeoutIsIgnored(t *testing.T) {
 	worktree := t.TempDir()
 	setHome(t, home)
 
-	writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"),
+	writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"),
 		"review:\n  timeout: \"much\"\n  parallel: 0\n")
 
 	cfg := LoadLocalConfig(worktree)
@@ -204,8 +204,8 @@ func TestRemovedDurableRunsKeysFailStrictly(t *testing.T) {
 			home := t.TempDir()
 			worktree := t.TempDir()
 			setHome(t, home)
-			writeConfig(t, filepath.Join(home, ".vas_sentinel", "vassentinel.yml"), tt.global)
-			writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			writeConfig(t, filepath.Join(home, ".vcsentinel", "vcsentinel.yml"), tt.global)
+			writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), tt.yaml)
 
 			_, err := LoadStrictLocalConfig(worktree)
 			if err == nil {
@@ -235,7 +235,7 @@ func TestReviewEvidenceAdmissionFlag(t *testing.T) {
 			home := t.TempDir()
 			worktree := t.TempDir()
 			setHome(t, home)
-			writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), tt.yaml)
 			cfg := LoadLocalConfig(worktree)
 			if cfg.Review.EvidenceAdmission != tt.want {
 				t.Fatalf("EvidenceAdmission = %v, want %v", cfg.Review.EvidenceAdmission, tt.want)
@@ -262,7 +262,7 @@ func TestReviewCancellationEscalationFlag(t *testing.T) {
 			home := t.TempDir()
 			worktree := t.TempDir()
 			setHome(t, home)
-			writeConfig(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), tt.yaml)
+			writeConfig(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), tt.yaml)
 			cfg := LoadLocalConfig(worktree)
 			if cfg.Review.CancellationEscalation != tt.want {
 				t.Fatalf("CancellationEscalation = %v, want %v", cfg.Review.CancellationEscalation, tt.want)

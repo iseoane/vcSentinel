@@ -270,9 +270,9 @@ func TestRunsPruneHumanOutputListsEveryDecision(t *testing.T) {
 //
 // A record written from a linked worktree is not an unreadable read. It is an
 // absent one. review.NewLedger is anchored at the checkout's gitDir, so the
-// main checkout writes to <gitCommonDir>/vas-sentinel only because its two
+// main checkout writes to <gitCommonDir>/vcsentinel only because its two
 // paths coincide, while a linked worktree writes to
-// <gitCommonDir>/worktrees/<name>/vas-sentinel. The collector reads the common
+// <gitCommonDir>/worktrees/<name>/vcsentinel. The collector reads the common
 // directory alone, so the identity below is cited by real review evidence and
 // invisible to the guard, and the stream it protects is prunable.
 //
@@ -377,7 +377,7 @@ func TestLedgerV1DirectoriesFailsClosed(t *testing.T) {
 				if err := os.MkdirAll(gitDir, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(gitDir, "vas-sentinel"), []byte("not a ledger\n"), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(gitDir, "vcsentinel"), []byte("not a ledger\n"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -390,7 +390,7 @@ func TestLedgerV1DirectoriesFailsClosed(t *testing.T) {
 				if err := os.MkdirAll(gitDir, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(filepath.Join(commonDir, "gone"), filepath.Join(gitDir, "vas-sentinel")); err != nil {
+				if err := os.Symlink(filepath.Join(commonDir, "gone"), filepath.Join(gitDir, "vcsentinel")); err != nil {
 					t.Skipf("symlinks unavailable on this platform: %v", err)
 				}
 			},
@@ -431,7 +431,7 @@ func TestLedgerV1DirectoriesFindsRealLedgers(t *testing.T) {
 
 	t.Run("one with a ledger and one without", func(t *testing.T) {
 		commonDir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(commonDir, "worktrees", "with-records", "vas-sentinel"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(commonDir, "worktrees", "with-records", "vcsentinel"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.MkdirAll(filepath.Join(commonDir, "worktrees", "without-records"), 0o755); err != nil {

@@ -327,8 +327,8 @@ func TestOpenCodeReviewObservesDeniedToolCalls(t *testing.T) {
 // string contract must answer with the same observable text.
 func TestOpenCodeReviewResultReportsWireObservations(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadOpenCodeProbeFixture(t))
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", loadOpenCodeProbeFixture(t))
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: "opencode-go/glm-5.3-flash"},

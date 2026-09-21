@@ -17,13 +17,9 @@ import (
 )
 
 // storeDirName names the directory under os.TempDir() that holds every shared
-// review snapshot. It deliberately does NOT carry the legacy
-// vas-sentinel-review- prefix: that prefix belongs to the per-invocation
-// directories old versions of this package created, and the reaper treats
-// prefix matches as purely age-based residue, while store entries always get
-// the lock-aware treatment below. The platform files make the root per-UID
-// and fail closed on insecure layouts.
-const storeDirName = "vas-sentinel-snapshots"
+// vcSentinel review snapshot. The platform files make the root per-UID and
+// fail closed on insecure layouts.
+const storeDirName = "vcsentinel-snapshots"
 
 // Store entry naming. The published tree for a SHA is "sha-<sha>", its
 // readiness marker "sha-<sha>.ready", its readiness manifest
@@ -41,7 +37,7 @@ const (
 	lockSuffix      = ".lock"
 	// ProviderStatePrefix identifies per-invocation provider state roots.
 	// Unlike published snapshots, no lease is shared across these directories.
-	ProviderStatePrefix = "vas-sentinel-review-provider-"
+	ProviderStatePrefix = "vcsentinel-review-provider-"
 )
 
 // ProviderStatePattern builds the os.MkdirTemp pattern for a provider state

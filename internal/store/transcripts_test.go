@@ -14,7 +14,7 @@ import (
 
 // newTranscriptFixture builds one store with a single handcrafted execution
 // directory so transcript helpers are exercised against the real layout:
-// <root>/vas-sentinel/executions/v1/<runID>/{request.json,outcomes,transcripts}.
+// <root>/vcsentinel/executions/v1/<runID>/{request.json,outcomes,transcripts}.
 func newTranscriptFixture(t *testing.T) (*Store, string, string) {
 	t.Helper()
 	backing := NewStore(t.TempDir())

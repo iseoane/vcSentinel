@@ -152,7 +152,7 @@ func Run(worktreePath string, opts Options) Report {
 
 	cfg, err := config.LoadStrictLocalConfig(worktreePath)
 	if err != nil {
-		add("config", "strict_load", false, fmt.Sprintf("vassentinel.yml fails strict load: %v", err), "fix the yml so it loads strictly; agent checks are skipped until it does")
+		add("config", "strict_load", false, fmt.Sprintf("vcsentinel.yml fails strict load: %v", err), "fix the yml so it loads strictly; agent checks are skipped until it does")
 		return rep
 	}
 	add("config", "strict_load", true, fmt.Sprintf("yml loads strictly (%d agents, active_agent %q)", len(cfg.Agents), cfg.ActiveAgent), "")
@@ -216,25 +216,25 @@ func checkHook(worktreePath string, opts Options, add func(string, string, bool,
 	}
 	raw, err := os.ReadFile(filepath.Join(common, "hooks", "pre-commit"))
 	if err != nil {
-		add("hook", "pre-commit", false, "no pre-commit hook installed", "run sentinel init to install the hook")
+		add("hook", "pre-commit", false, "no pre-commit hook installed", "run vcsentinel init to install the hook")
 		return
 	}
 	target, ok := hookTarget(string(raw))
 	if !ok {
-		add("hook", "pre-commit", false, "hook content is not the sentinel shape", "run sentinel init to reinstall the hook")
+		add("hook", "pre-commit", false, "hook content is not the vcsentinel shape", "run vcsentinel init to reinstall the hook")
 		return
 	}
 	if isVersionedBinTarget(target) {
-		add("hook", "pre-commit", false, fmt.Sprintf("hook points at %s under bin/<version>/, which changes every release (the T0.0 trap), leaving a stale hook behind", target), "reinstall the hook from a stable binary with sentinel init")
+		add("hook", "pre-commit", false, fmt.Sprintf("hook points at %s under bin/<version>/, which changes every release (the T0.0 trap), leaving a stale hook behind", target), "reinstall the hook from a stable binary with vcsentinel init")
 		return
 	}
 	add("hook", "pre-commit", true, fmt.Sprintf("hook points at stable binary %s", target), "")
 }
 
 // isVersionedBinTarget reports the T0.0 trap shape: a hook binary installed
-// as <anything>/bin/<version>/sentinel, where the version directory changes
+// as <anything>/bin/<version>/vcsentinel, where the version directory changes
 // on every release. Installed locations (GOPATH/bin, /usr/local/bin,
-// ~/.vas_sentinel/bin) have a non-version parent and are stable.
+// ~/.vcsentinel/bin) have a non-version parent and are stable.
 func isVersionedBinTarget(target string) bool {
 	parts := strings.Split(strings.Trim(target, "/"), "/")
 	if len(parts) < 3 {
@@ -293,7 +293,7 @@ func checkUpdates(opts Options, add func(string, string, bool, string, string)) 
 	}
 	switch cmp := compareVersions(opts.CurrentVersion, latest); {
 	case cmp < 0:
-		add("updates", "latest_release", false, fmt.Sprintf("%s is running, %s is published", opts.CurrentVersion, latest), "run sentinel upgrade")
+		add("updates", "latest_release", false, fmt.Sprintf("%s is running, %s is published", opts.CurrentVersion, latest), "run vcsentinel upgrade")
 	case cmp > 0:
 		add("updates", "latest_release", true, fmt.Sprintf("%s is running, newer than published %s", opts.CurrentVersion, latest), "")
 	default:

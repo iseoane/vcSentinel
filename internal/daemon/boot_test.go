@@ -70,7 +70,7 @@ func appendBootFixtureStream(t *testing.T, backing *store.Store, candidate strin
 // by removing the snapshot after a real append (same layout knowledge as the
 // cmd-level repair fixtures).
 func snapshotPathFor(root, runID string) string {
-	return filepath.Join(root, "vas-sentinel", "executions", "v1", runID, "state.json")
+	return filepath.Join(root, "vcsentinel", "executions", "v1", runID, "state.json")
 }
 
 func TestReconcileOnBootSettlesUnprojectedAndSurfacesOperatorRequired(t *testing.T) {

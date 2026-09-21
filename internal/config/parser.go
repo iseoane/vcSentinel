@@ -16,7 +16,7 @@ import (
 
 // Agent adapter families an agent entry may declare through its kind key.
 // The empty value is the historical CLI family: absence of kind keeps every
-// existing vassentinel.yml byte-identical in behavior.
+// existing vcsentinel.yml byte-identical in behavior.
 const (
 	AgentKindCLI  = ""
 	AgentKindACPX = "acpx"
@@ -65,7 +65,7 @@ type ReviewConfig struct {
 	// before a completion may influence verdicts, and admission failures are
 	// surfaced as first-class evidence. It defaults to true (cutover
 	// default-on); setting it false restores the pre-R6 observe-but-admit
-	// lenient behavior while runs stay inspectable via `sentinel runs`.
+	// lenient behavior while runs stay inspectable via `vcsentinel runs`.
 	EvidenceAdmission bool
 	// CancellationEscalation enables bounded whole-tree escalation after the
 	// cooperative grace budget expires when a routed review owns its provider
@@ -120,10 +120,10 @@ type ValidationConfig struct {
 	Mode     string
 }
 
-// Config is the complete configuration of VAS Sentinel with precedence
+// Config is the complete configuration of vcSentinel with precedence
 // defaults -> global -> per-project.
 // CIConfig controls the optional GitHub Actions evidence collected by
-// `sentinel pr create`. An empty Workflow deliberately disables CI; the
+// `vcsentinel pr create`. An empty Workflow deliberately disables CI; the
 // command never guesses a workflow from detected CI files.
 type CIConfig struct {
 	Workflow    string
@@ -214,25 +214,25 @@ func defaultConfig() Config {
 }
 
 // globalConfigPath returns the path of the global configuration file,
-// located next to the VAS Sentinel base directory in the user's home.
+// located next to the vcSentinel base directory in the user's home.
 func globalConfigPath() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(homeDir, ".vas_sentinel", "vassentinel.yml"), nil
+	return filepath.Join(homeDir, ".vcsentinel", "vcsentinel.yml"), nil
 }
 
 // perProjectConfigPath returns the path of the per-project configuration
-// file, located in the .vas_sentinel folder of the worktree root,
+// file, located in the .vcsentinel folder of the worktree root,
 // keeping coherence with the user's global directory.
 func perProjectConfigPath(worktreePath string) string {
-	return filepath.Join(worktreePath, ".vas_sentinel", "vassentinel.yml")
+	return filepath.Join(worktreePath, ".vcsentinel", "vcsentinel.yml")
 }
 
 // LoadLocalConfig loads the configuration following the
-// precedence: defaults -> global (~/.vas_sentinel/vassentinel.yml) ->
-// per-project (<worktree>/.vas_sentinel/vassentinel.yml). Per-project
+// precedence: defaults -> global (~/.vcsentinel/vcsentinel.yml) ->
+// per-project (<worktree>/.vcsentinel/vcsentinel.yml). Per-project
 // wins and overwrites only the fields it defines.
 func LoadLocalConfig(worktreePath string) Config {
 	cfg := defaultConfig()
@@ -260,7 +260,7 @@ func LoadLocalConfig(worktreePath string) Config {
 // file and line (T1.1), instead of being ignored.
 //
 // Requirement added by the orchestrator for the F1 phase exit criterion #4
-// ("an unknown key in vassentinel.yml produces an explicit error with the
+// ("an unknown key in vcsentinel.yml produces an explicit error with the
 // line, not silence"): 'gate' (T1.7) is the first entry point where this
 // must be visible, being the new consolidated command.
 // LoadLocalConfig does NOT change (same contract without error to
@@ -369,7 +369,7 @@ type changeYAML struct {
 //
 // Version has no equivalent field in Config: it is not used in any
 // computation today, but the real ymls of this repo declare it (see
-// .vas_sentinel/vassentinel.yml), so it must be accepted to avoid breaking
+// .vcsentinel/vcsentinel.yml), so it must be accepted to avoid breaking
 // the strict decoding of existing configuration. Adding that section to
 // Config is another task.
 //

@@ -25,7 +25,7 @@ import (
 // evidence of findings); internal/ops only needs the exit code and discards
 // the output at its call site.
 //
-// Commands come from the user's vassentinel.yml: running them through a shell
+// Commands come from the user's vcsentinel.yml: running them through a shell
 // is the design (trust equivalent to the yml itself); they are not sanitized
 // here.
 func Run(worktree, command string) (exit int, output string, err error) {

@@ -100,7 +100,7 @@ func TestVCSentinelReviewWiringAnnouncesAdmittedRunsOnStderr(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Chdir(worktree)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), cutoverValidationYml)
 
 	cfg, err := config.LoadStrictLocalConfig(worktree)
 	if err != nil {
@@ -190,11 +190,11 @@ func TestVCSentinelReviewWiringAnnouncesAdmittedRunsOnStderr(t *testing.T) {
 		}
 	}
 	// JSON-safety: zero announcement bytes reached the stdout path.
-	if strings.Contains(stdoutCaptured, "vas-sentinel:") || strings.Contains(stdoutCaptured, "--follow") {
+	if strings.Contains(stdoutCaptured, "vcsentinel:") || strings.Contains(stdoutCaptured, "--follow") {
 		t.Errorf("stdout received announcement bytes, corrupting --json output:\n%q", stdoutCaptured)
 	}
-	if !strings.Contains(announcements, "vas-sentinel:") {
-		t.Errorf("announcement lacks the established vas-sentinel diagnostic prefix:\n%s", announcements)
+	if !strings.Contains(announcements, "vcsentinel:") {
+		t.Errorf("announcement lacks the established vcsentinel diagnostic prefix:\n%s", announcements)
 	}
 }
 

@@ -186,7 +186,7 @@ func TestRecentRunsSurfacesOperationsAndDegradesSoftly(t *testing.T) {
 		t.Fatalf("legacy run operation = %q, want empty", labels[bareID].Operation)
 	}
 
-	corruptErr := os.WriteFile(filepath.Join(commonDir, "vas-sentinel", "executions", "v1", gateID, "policy.json"),
+	corruptErr := os.WriteFile(filepath.Join(commonDir, "vcsentinel", "executions", "v1", gateID, "policy.json"),
 		[]byte(`{"worktree":"/hidden"}`), 0600)
 	if corruptErr != nil {
 		t.Fatal(corruptErr)
@@ -472,7 +472,7 @@ func TestRecentRunsSurfacesHistoricalProjectionCorruption(t *testing.T) {
 	st := store.NewStore(commonDir)
 	historicalID := seedRun(t, st, "candidate:presence-corrupt-history")
 	seedFailedRun(t, st, "candidate:presence-corrupt-history-newer")
-	statePath := filepath.Join(commonDir, "vas-sentinel", "executions", "v1", historicalID, "state.json")
+	statePath := filepath.Join(commonDir, "vcsentinel", "executions", "v1", historicalID, "state.json")
 	if err := os.WriteFile(statePath, []byte("{not json"), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -225,8 +225,8 @@ func TestClaudeReviewResultReportsWireObservations(t *testing.T) {
 		t.Fatalf("could not get the current directory: %v", err)
 	}
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", loadClaudeProbeFixture(t))
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", loadClaudeProbeFixture(t))
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "claude"),
 		Config:     config.AgentConfig{Model: "claude-haiku-4-5"},

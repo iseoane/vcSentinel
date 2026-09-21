@@ -73,12 +73,12 @@ func TestRunDoctorWithPrintsProgressBeforeProbe(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // keep the host's global agents out of the run
 	stageDoctorBinaries(t)        // resolution must not depend on the host PATH
 	worktree := t.TempDir()
-	dir := filepath.Join(worktree, ".vas_sentinel")
+	dir := filepath.Join(worktree, ".vcsentinel")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	yml := "version: \"2.0\"\nactive_agent: \"auto\"\nagents:\n  claude:\n    model: \"claude-5-sonnet\"\n    reasoning_effort: \"high\"\n  opencode:\n    model: \"deepseek-v4-flash-free\"\n    reasoning_effort: \"default\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "vassentinel.yml"), []byte(yml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "vcsentinel.yml"), []byte(yml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out strings.Builder

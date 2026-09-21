@@ -42,7 +42,7 @@ func TreeOf(revision string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// snapshotsDir returns <git-common-dir>/vas-sentinel/snapshots of the
+// snapshotsDir returns <git-common-dir>/vcsentinel/snapshots of the
 // active repository (the same for every linked worktree, unlike each one's
 // private git-dir), creating it if it does not exist.
 func snapshotsDir() (string, error) {
@@ -54,7 +54,7 @@ func snapshotsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(commonDir, "vas-sentinel", "snapshots")
+	dir := filepath.Join(commonDir, "vcsentinel", "snapshots")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
@@ -106,7 +106,7 @@ func CreateSnapshot(treeOID string) (string, error) {
 		return refreshSnapshot(destination)
 	}
 
-	anchorCommit, err := runGitOutput("commit-tree", treeOID, "-m", "vas-sentinel: snapshot")
+	anchorCommit, err := runGitOutput("commit-tree", treeOID, "-m", "vcsentinel: snapshot")
 	if err != nil {
 		return "", fmt.Errorf("could not anchor tree %s into a commit for the snapshot: %w", treeOID, err)
 	}
@@ -360,7 +360,7 @@ func refreshSnapshot(destination string) (string, error) {
 const SnapshotRetention = 24 * time.Hour
 
 // PurgeSnapshots removes the snapshots of
-// <git-common-dir>/vas-sentinel/snapshots whose modification time is older
+// <git-common-dir>/vcsentinel/snapshots whose modification time is older
 // than age. They are disposable (recreated by CreateSnapshot), so removal
 // is forced when the normal one fails.
 func PurgeSnapshots(age time.Duration) error {

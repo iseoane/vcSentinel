@@ -36,7 +36,7 @@ func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {
 
 	names := agentNamesInPATH(cfg)
 	if len(names) == 0 {
-		return nil, fmt.Errorf("no agent configured in vassentinel.yml is available on the PATH: %s", strings.Join(all, ", "))
+		return nil, fmt.Errorf("no agent configured in vcsentinel.yml is available on the PATH: %s", strings.Join(all, ", "))
 	}
 
 	// Auto path: a chain with one adapter per available agent, in the yml's
@@ -45,7 +45,7 @@ func NewAgentAdapter(worktreePath string) (AgentAdapter, error) {
 }
 
 // NewAgentAdapterForMessage builds the adapter to generate the commit
-// messages of 'sentinel slice'. Same as NewAgentAdapter, but every agent
+// messages of 'vcsentinel slice'. Same as NewAgentAdapter, but every agent
 // resolves its model/effort with the nested "commit" profile (low reasoning)
 // instead of the base model/effort: naming a commit does not need the same
 // reasoning as the rest of the task. When the agent does not define the
@@ -73,7 +73,7 @@ func NewAgentAdapterForMessage(worktreePath string) (AgentAdapter, error) {
 
 	names := agentNamesInPATH(cfg)
 	if len(names) == 0 {
-		return nil, fmt.Errorf("no agent configured in vassentinel.yml is available on the PATH: %s", strings.Join(all, ", "))
+		return nil, fmt.Errorf("no agent configured in vcsentinel.yml is available on the PATH: %s", strings.Join(all, ", "))
 	}
 
 	// Auto path: each adapter of the chain resolves ITS commit profile.
@@ -82,7 +82,7 @@ func NewAgentAdapterForMessage(worktreePath string) (AgentAdapter, error) {
 
 // NewAgentAdapterNamed builds a CLI adapter for an explicit agent name,
 // without automatic resolution. It returns an error if the name is not
-// configured in vassentinel.yml.
+// configured in vcsentinel.yml.
 func NewAgentAdapterNamed(worktreePath string, name string) (AgentAdapter, error) {
 	cfg := config.LoadLocalConfig(worktreePath)
 	return newAdapter(cfg, name, "")
@@ -92,7 +92,7 @@ func NewAgentAdapterNamed(worktreePath string, name string) (AgentAdapter, error
 // name, with the "commit" profile for the slice messages (applies low
 // reasoning and falls back to the agent's base model if the profile does not
 // exist). It returns an error if the name is not configured in
-// vassentinel.yml.
+// vcsentinel.yml.
 func NewAgentAdapterNamedForMessage(worktreePath string, name string) (AgentAdapter, error) {
 	cfg := config.LoadLocalConfig(worktreePath)
 	return newAdapter(cfg, name, "commit")
@@ -117,7 +117,7 @@ func newAdapter(cfg config.Config, name, profile string) (AgentAdapter, error) {
 // family's defaults).
 func buildAgentAdapter(cfg config.Config, name, profile string, timeout time.Duration) (AgentAdapter, error) {
 	if _, exists := cfg.Agents[name]; !exists {
-		return nil, fmt.Errorf("agent %q is not configured in vassentinel.yml", name)
+		return nil, fmt.Errorf("agent %q is not configured in vcsentinel.yml", name)
 	}
 	return buildAdapterFamily(cfg, name, resolveAgentConfig(cfg, name, profile), timeout)
 }
@@ -217,7 +217,7 @@ func resolveAgentConfig(cfg config.Config, name, profile string) config.AgentCon
 }
 
 // AvailableAdapterNames returns the names of the agents configured in
-// vassentinel.yml whose binary is available on the PATH, in the order they
+// vcsentinel.yml whose binary is available on the PATH, in the order they
 // appear in the yml (alphabetical when no order is declared).
 func AvailableAdapterNames(worktreePath string) []string {
 	cfg := config.LoadLocalConfig(worktreePath)
@@ -237,7 +237,7 @@ func NewAdapterWithProfile(cfg config.Config, profile config.ResolvedProfile) (P
 	if name == "" || name == "auto" {
 		available := agentNamesInPATH(cfg)
 		if len(available) == 0 {
-			return nil, fmt.Errorf("no agent configured in vassentinel.yml is available on the PATH")
+			return nil, fmt.Errorf("no agent configured in vcsentinel.yml is available on the PATH")
 		}
 		return buildChainProfile(cfg, available, profile)
 	}

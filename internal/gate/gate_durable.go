@@ -40,7 +40,7 @@
 //   - The review phase reuses the historical tail verbatim —
 //     review.AuditCommit plus translateVerdict — with reviewer invocations
 //     routed through the injected DurableReviewTransportFactory, i.e. the
-//     same construction path `sentinel review` wires today. Review runs are
+//     same construction path `vcsentinel review` wires today. Review runs are
 //     constructed at that different site, so the gate hands its root run ID
 //     to the factory for production wiring to thread the parent linkage;
 //     there is no second execution path.
@@ -273,7 +273,7 @@ func runDurableGatePhases(plan GateRunPlan, opts Options, rootRunID agentrun.Ide
 	// Piece 3 of docs/design/review-flow-ownership.md: the gate no longer
 	// audits. "Compiles and passes its checks" is a property of the tree at one
 	// moment; "is this piece well made" is a property of one commit, and the two
-	// cannot share an owner. `sentinel review` owns the second and is the only
+	// cannot share an owner. `vcsentinel review` owns the second and is the only
 	// writer of per-commit verdicts, so a green validation IS the whole gate
 	// verdict now, and reaching this point is that verdict.
 	return Result{

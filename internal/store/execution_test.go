@@ -204,7 +204,7 @@ func TestCreateRunUsesLinkedWorktreeCommonDir(t *testing.T) {
 	principal := t.TempDir()
 	runGit(t, principal, "init", "-q")
 	runGit(t, principal, "config", "user.email", "test@vas.sentinel")
-	runGit(t, principal, "config", "user.name", "vas-sentinel-test")
+	runGit(t, principal, "config", "user.name", "vcsentinel-test")
 	if err := os.WriteFile(filepath.Join(principal, "tracked.txt"), []byte("tracked"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestCreateRunUsesLinkedWorktreeCommonDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDirectory := filepath.Join(principalCommon, "vas-sentinel", "executions", "v1", string(job.RunID()))
+	wantDirectory := filepath.Join(principalCommon, "vcsentinel", "executions", "v1", string(job.RunID()))
 	if directory != wantDirectory {
 		t.Fatalf("execution directory = %s, want %s", directory, wantDirectory)
 	}

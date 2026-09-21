@@ -276,7 +276,7 @@ func createEmptyRun(t *testing.T, controller *Controller, name string) agentrun.
 }
 
 func eventsPath(storeRoot string, runID agentrun.Identity) string {
-	return filepath.Join(storeRoot, "vas-sentinel", "executions", "v1", string(runID), "events.jsonl")
+	return filepath.Join(storeRoot, "vcsentinel", "executions", "v1", string(runID), "events.jsonl")
 }
 
 func appendString(t *testing.T, path, value string) {

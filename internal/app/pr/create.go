@@ -122,11 +122,11 @@ func RunPrCreateWith(w io.Writer, worktree string, flags FlagsPrCreate, deps Dep
 		return 1
 	}
 	if entry == nil {
-		fmt.Fprintln(w, "No pr review exists for this branch. Run 'sentinel pr review' first: pr create publishes its judgement and never authors one.")
+		fmt.Fprintln(w, "No pr review exists for this branch. Run 'vcsentinel pr review' first: pr create publishes its judgement and never authors one.")
 		return 1
 	}
 	if entry.HeadSHA != head {
-		fmt.Fprintf(w, "The stored pr review covers %s, but this branch is now at %s. Re-run 'sentinel pr review'.\n", shortSHA(entry.HeadSHA), shortSHA(head))
+		fmt.Fprintf(w, "The stored pr review covers %s, but this branch is now at %s. Re-run 'vcsentinel pr review'.\n", shortSHA(entry.HeadSHA), shortSHA(head))
 		return 1
 	}
 	if _, err := ValidatePRReviewEntry(entry, branch, head); err != nil {
@@ -329,7 +329,7 @@ func verifyRemoteBranch(worktree, branch, head string, deps DepsPrCreate) error 
 	if remoteHead == "" || remoteHead == head {
 		return nil
 	}
-	return fmt.Errorf("remote branch %q now points at %s, not the reviewed %s; re-run sentinel pr review", branch, shortSHA(remoteHead), shortSHA(head))
+	return fmt.Errorf("remote branch %q now points at %s, not the reviewed %s; re-run vcsentinel pr review", branch, shortSHA(remoteHead), shortSHA(head))
 }
 
 func verifyStoredSnapshot(worktree, branch, head string, entry *store.PRReviewEntry, deps DepsPrCreate) error {
@@ -338,7 +338,7 @@ func verifyStoredSnapshot(worktree, branch, head string, entry *store.PRReviewEn
 		return fmt.Errorf("could not re-check the current branch: %w", err)
 	}
 	if currentBranch != branch {
-		return fmt.Errorf("current branch changed from %q to %q; re-run sentinel pr review", branch, currentBranch)
+		return fmt.Errorf("current branch changed from %q to %q; re-run vcsentinel pr review", branch, currentBranch)
 	}
 	if deps.GetHeadSHAAt == nil {
 		return errors.New("could not re-check the current HEAD")
@@ -348,7 +348,7 @@ func verifyStoredSnapshot(worktree, branch, head string, entry *store.PRReviewEn
 		return fmt.Errorf("could not re-check the current HEAD: %w", err)
 	}
 	if currentHead != head {
-		return fmt.Errorf("current HEAD changed from %s to %s; re-run sentinel pr review", shortSHA(head), shortSHA(currentHead))
+		return fmt.Errorf("current HEAD changed from %s to %s; re-run vcsentinel pr review", shortSHA(head), shortSHA(currentHead))
 	}
 	if _, err := ValidatePRReviewEntry(entry, branch, head); err != nil {
 		return err
@@ -380,7 +380,7 @@ func validateStoredEvidence(worktree string, entry *store.PRReviewEntry, check f
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("The pr review evidence is not committed: %s. Run 'git add .vas_sentinel/evidence && git commit -m \"chore(evidence): record the pr review logs\"' and re-run 'sentinel pr review'.", strings.Join(missing, ", "))
+		return fmt.Errorf("The pr review evidence is not committed: %s. Run 'git add .vcsentinel/evidence && git commit -m \"chore(evidence): record the pr review logs\"' and re-run 'vcsentinel pr review'.", strings.Join(missing, ", "))
 	}
 	return nil
 }
@@ -390,7 +390,7 @@ func validateEvidencePath(value string) error {
 		return fmt.Errorf("unsafe evidence path %q", value)
 	}
 	clean := path.Clean(value)
-	if clean != value || !strings.HasPrefix(value, ".vas_sentinel/evidence/") {
+	if clean != value || !strings.HasPrefix(value, ".vcsentinel/evidence/") {
 		return fmt.Errorf("unsafe evidence path %q", value)
 	}
 	return nil

@@ -144,7 +144,7 @@ type OverviewResult struct {
 
 // UnauditedCommit pairs a commit that carries no review record, at the end
 // of this AnalyzeBranch call, with its subject line — so a report can point
-// a human at it (`sentinel review <sha>`) without a second git lookup.
+// a human at it (`vcsentinel review <sha>`) without a second git lookup.
 type UnauditedCommit struct {
 	SHA     string
 	Subject string
@@ -487,7 +487,7 @@ func auditBranchCommit(ledger *Ledger, sha string, opts BranchOptions, specOnly 
 		// stderr instead of propagating the error, so the signal is neither
 		// lost silently nor made fatal.
 		if err := RegisterCommitBlobs(opts.Store, sha, files); err != nil {
-			fmt.Fprintf(os.Stderr, "vas-sentinel: could not register the blobs of %s in the store, continuing without registering (future-reuse optimization, does not affect this audit): %v\n", sha, err)
+			fmt.Fprintf(os.Stderr, "vcsentinel: could not register the blobs of %s in the store, continuing without registering (future-reuse optimization, does not affect this audit): %v\n", sha, err)
 		}
 	}
 	return nil
@@ -512,7 +512,7 @@ func unauditedCommitSubjects(shas []string) []UnauditedCommit {
 	for _, sha := range shas {
 		subject, err := git.CommitMessage(sha)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "vas-sentinel: could not resolve the subject of %s, reporting it unaudited without one: %v\n", sha, err)
+			fmt.Fprintf(os.Stderr, "vcsentinel: could not resolve the subject of %s, reporting it unaudited without one: %v\n", sha, err)
 			subject = ""
 		}
 		out = append(out, UnauditedCommit{SHA: sha, Subject: subject})

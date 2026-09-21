@@ -57,7 +57,7 @@ func (a *reviewRunAnnouncer) observe(runID string) {
 		return
 	}
 	a.seen[runID] = true
-	fmt.Fprintf(a.out, "vas-sentinel: durable review run admitted %s; follow it live with `vcsentinel runs attach --run %s --follow`\n", runID, runID)
+	fmt.Fprintf(a.out, "vcsentinel: durable review run admitted %s; follow it live with `vcsentinel runs attach --run %s --follow`\n", runID, runID)
 }
 
 // announcedReviewTransport builds the engine-side review transport
@@ -230,7 +230,7 @@ func newDurableReviewTransport(cfg config.Config, worktree, sha string, paths []
 	safePaths := review.SafeReviewPaths(paths)
 	gitCommonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "vas-sentinel: durable review transport unavailable, no git common dir: %v\n", err)
+		fmt.Fprintf(os.Stderr, "vcsentinel: durable review transport unavailable, no git common dir: %v\n", err)
 		return nil
 	}
 	st := store.NewStore(gitCommonDir)
@@ -261,7 +261,7 @@ func newDurableReviewTransport(cfg config.Config, worktree, sha string, paths []
 func applyDurableCutover(options *gate.Options, worktree, stage, sha string) {
 	gitCommonDir, err := git.GetGitCommonDir(worktree)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "vas-sentinel: gate durable runs unavailable for this execution, no git common dir: %v\n", err)
+		fmt.Fprintf(os.Stderr, "vcsentinel: gate durable runs unavailable for this execution, no git common dir: %v\n", err)
 		return
 	}
 	options.Stage = stage

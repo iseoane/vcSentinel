@@ -35,7 +35,7 @@ func compileSlowGit(t *testing.T) string {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("could not compile the slow-git helper: %v\n%s", err, output)
 	}
-	t.Setenv("VAS_SENTINEL_TEST_REAL_GIT", realGit)
+	t.Setenv("VCSENTINEL_TEST_REAL_GIT", realGit)
 	return dir
 }
 
@@ -64,10 +64,10 @@ func TestReviewWithContextResultBoundsSnapshotCreationByTheAdapterTimeout(t *tes
 	slowGitDir := compileSlowGit(t)
 	binary := compileAgentBinary(t, "claude")
 	chdirToRepoRoot(t)
-	t.Setenv("VAS_SENTINEL_TEST_GIT_SLEEP_MS", "600")
+	t.Setenv("VCSENTINEL_TEST_GIT_SLEEP_MS", "600")
 	t.Setenv("PATH", slowGitDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", `{"type":"result","subtype":"success","stop_reason":"end_turn","result":"audit"}`)
 	adapter := CLIAdapter{
 		BinaryName: binary,
 		Timeout:    150 * time.Millisecond,

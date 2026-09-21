@@ -1,5 +1,5 @@
 // Package metrics provides deterministic, read-only aggregation over the
-// durable review and execution evidence stored by vas-sentinel.
+// durable review and execution evidence stored by vcsentinel.
 package metrics
 
 const unknownLabel = "unknown"

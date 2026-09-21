@@ -16,11 +16,11 @@ func isolateHome(t *testing.T) {
 
 func writeProjectYML(t *testing.T, worktree, body string) {
 	t.Helper()
-	dir := filepath.Join(worktree, ".vas_sentinel")
+	dir := filepath.Join(worktree, ".vcsentinel")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "vassentinel.yml"), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "vcsentinel.yml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -148,13 +148,13 @@ func TestHookPointingAtVersionedBinWarnsTrap(t *testing.T) {
 	worktree := t.TempDir()
 	writeProjectYML(t, worktree, twoAgentYML)
 	common := t.TempDir()
-	writeHook(t, common, filepath.Join(worktree, "bin", "0.2.0", "sentinel"))
+	writeHook(t, common, filepath.Join(worktree, "bin", "0.2.0", "vcsentinel"))
 	stageBinaries(t, "claude", "opencode", "rg")
 	env := stubEnv(t, common, map[string]string{"claude": "ok", "opencode": "ok"}, nil)
 	rep := Run(worktree, Options{Env: env})
 	if got := findCheck(t, rep, "hook", "pre-commit"); got.OK {
 		t.Errorf("hook OK while pointing at bin/<version>/")
-	} else if !strings.Contains(got.Detail, "bin/") || !strings.Contains(got.Remedy, "sentinel init") {
+	} else if !strings.Contains(got.Detail, "bin/") || !strings.Contains(got.Remedy, "vcsentinel init") {
 		t.Errorf("hook finding = %+v, want the T0.0 trap plus the init command", got)
 	}
 }
@@ -164,7 +164,7 @@ func TestHookInsideRepoWithoutVersionIsStable(t *testing.T) {
 	worktree := t.TempDir()
 	writeProjectYML(t, worktree, twoAgentYML)
 	common := t.TempDir()
-	writeHook(t, common, filepath.Join(worktree, "tools", "sentinel"))
+	writeHook(t, common, filepath.Join(worktree, "tools", "vcsentinel"))
 	stageBinaries(t, "claude", "opencode", "rg")
 	env := stubEnv(t, common, map[string]string{"claude": "ok", "opencode": "ok"}, nil)
 	if got := findCheck(t, Run(worktree, Options{Env: env}), "hook", "pre-commit"); !got.OK {
@@ -177,14 +177,14 @@ func TestIsVersionedBinTarget(t *testing.T) {
 		target string
 		want   bool
 	}{
-		{"/repo/bin/0.2.0/sentinel", true},
-		{"/repo/bin/0.2.0/sentinel.exe", true},
-		{"/usr/local/bin/sentinel", false},
-		{"/home/user/go/bin/sentinel", false},
-		{"/home/user/.vas_sentinel/bin/sentinel", false},
-		{"/repo/tools/sentinel", false},
-		{"sentinel", false},
-		{"/repo/bin/latest/sentinel", false},
+		{"/repo/bin/0.2.0/vcsentinel", true},
+		{"/repo/bin/0.2.0/vcsentinel.exe", true},
+		{"/usr/local/bin/vcsentinel", false},
+		{"/home/user/go/bin/vcsentinel", false},
+		{"/home/user/.vcsentinel/bin/vcsentinel", false},
+		{"/repo/tools/vcsentinel", false},
+		{"vcsentinel", false},
+		{"/repo/bin/latest/vcsentinel", false},
 	}
 	for _, tc := range cases {
 		if got := isVersionedBinTarget(tc.target); got != tc.want {
@@ -201,7 +201,7 @@ func TestMissingHookPrintsInitCommand(t *testing.T) {
 	rep := Run(worktree, Options{Env: env})
 	if got := findCheck(t, rep, "hook", "pre-commit"); got.OK {
 		t.Errorf("hook OK without a hook file")
-	} else if !strings.Contains(got.Remedy, "sentinel init") {
+	} else if !strings.Contains(got.Remedy, "vcsentinel init") {
 		t.Errorf("hook remedy = %q, want the exact init command", got.Remedy)
 	}
 }
@@ -211,7 +211,7 @@ func TestUpdatesFlagComparesAgainstLatest(t *testing.T) {
 	worktree := t.TempDir()
 	writeProjectYML(t, worktree, twoAgentYML)
 	common := t.TempDir()
-	writeHook(t, common, "/usr/local/bin/sentinel")
+	writeHook(t, common, "/usr/local/bin/vcsentinel")
 	stageBinaries(t, "claude", "opencode", "rg")
 	env := stubEnv(t, common, map[string]string{"claude": "ok", "opencode": "ok"}, nil)
 
@@ -226,7 +226,7 @@ func TestUpdatesFlagComparesAgainstLatest(t *testing.T) {
 	rep := Run(worktree, Options{CurrentVersion: "0.2.0", CheckUpdates: true, Env: env})
 	if got := findCheck(t, rep, "updates", "latest_release"); got.OK {
 		t.Errorf("updates OK while v9.9.9 is newer than 0.2.0")
-	} else if !strings.Contains(got.Remedy, "sentinel upgrade") {
+	} else if !strings.Contains(got.Remedy, "vcsentinel upgrade") {
 		t.Errorf("updates remedy = %q, want the exact upgrade command", got.Remedy)
 	}
 
@@ -264,7 +264,7 @@ func TestCodegraphUnknownHasNoRemedy(t *testing.T) {
 func TestTextRendersUnknownDistinctFromFailure(t *testing.T) {
 	rep := Report{Checks: []Check{
 		{Section: "codegraph", Name: "index_initialized", Detail: "codegraph status unavailable: exit status 127", Unknown: true},
-		{Section: "hook", Name: "pre-commit", Detail: "no pre-commit hook installed", Remedy: "run sentinel init to install the hook"},
+		{Section: "hook", Name: "pre-commit", Detail: "no pre-commit hook installed", Remedy: "run vcsentinel init to install the hook"},
 	}}
 	if n := rep.WarnCount(); n != 1 {
 		t.Errorf("WarnCount = %d, want 1 (unknown is not a failure)", n)

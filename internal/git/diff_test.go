@@ -210,9 +210,9 @@ func prepareTestRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("GIT_AUTHOR_NAME", "VAS Sentinel Test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@vas-sentinel")
+	t.Setenv("GIT_AUTHOR_EMAIL", "test@vcsentinel")
 	t.Setenv("GIT_COMMITTER_NAME", "VAS Sentinel Test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@vas-sentinel")
+	t.Setenv("GIT_COMMITTER_EMAIL", "test@vcsentinel")
 
 	runGitInDir(t, dir, "init", "-q")
 	runGitInDir(t, dir, "config", "commit.gpgsign", "false")

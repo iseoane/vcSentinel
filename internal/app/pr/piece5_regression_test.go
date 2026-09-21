@@ -312,7 +312,7 @@ func TestRunPrCreateExitsOnConfigLoadErrorWithoutValidatingOrPublishing(t *testi
 		ReadPRReview:    func(string, string) (*store.PRReviewEntry, error) { return &entry, nil },
 		EvidenceAtHEAD:  func(string, string) (bool, string, error) { return true, "", nil },
 		LoadConfig: func(string) (config.Config, error) {
-			return config.Config{}, errors.New("vassentinel.yml: unknown key")
+			return config.Config{}, errors.New("vcsentinel.yml: unknown key")
 		},
 		GetGitDirAt: func(string) (string, error) { return "gitdir", nil },
 		RunValidation: func(string, []string, validation.RunOptions) ([]validation.ValidationRun, error) {
@@ -325,7 +325,7 @@ func TestRunPrCreateExitsOnConfigLoadErrorWithoutValidatingOrPublishing(t *testi
 	}
 	var output bytes.Buffer
 	code := RunPrCreateWith(&output, "worktree", FlagsPrCreate{}, deps, Wiring{})
-	if code != 1 || validated || published || !strings.Contains(output.String(), "vassentinel.yml: unknown key") {
+	if code != 1 || validated || published || !strings.Contains(output.String(), "vcsentinel.yml: unknown key") {
 		t.Fatalf("code=%d validated=%v published=%v output=%q", code, validated, published, output.String())
 	}
 }

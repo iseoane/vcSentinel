@@ -13,7 +13,7 @@ import (
 // failure is the worst possible failure mode.
 func TestUnknownKeyFailsWithLine(t *testing.T) {
 	worktree := t.TempDir()
-	path := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	path := filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml")
 	// The invented key "comand" is on line 4 (1-based, counting from the
 	// first line of the file).
 	writeConfig(t, path, `active_agent: "claude"

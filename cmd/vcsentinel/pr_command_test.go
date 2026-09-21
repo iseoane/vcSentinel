@@ -1023,7 +1023,7 @@ func TestBranchPrReviewOptionsProgressFollowsInjectedWriter(t *testing.T) {
 // precede the document fails here before any automation chokes on it.
 func TestPrReviewJSONStdoutStartsAtJSON(t *testing.T) {
 	worktree := tempGitRepo(t)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), cutoverValidationYml)
 	wiring := pr.Wiring{
 		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
 		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
@@ -1091,7 +1091,7 @@ func TestPrReviewJSONRoutesWarningsOffStdout(t *testing.T) {
 	}
 	t.Setenv("GIT_DIR", strings.TrimSpace(string(ambient)))
 	worktree := t.TempDir()
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), cutoverValidationYml)
 	wiring := pr.Wiring{
 		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
 		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
@@ -1152,7 +1152,7 @@ func TestPrReviewJSONRoutesWarningsOffStdout(t *testing.T) {
 // git state or agent is involved.
 func TestPrReviewJSONRoutesEventDetailWarningOffStdout(t *testing.T) {
 	worktree := tempGitRepo(t)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), cutoverValidationYml)
 	wiring := pr.Wiring{
 		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
 		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
@@ -1205,7 +1205,7 @@ func TestPrReviewJSONRoutesEventDetailWarningOffStdout(t *testing.T) {
 // warning deterministically, with no real agent in the loop.
 func TestPrReviewNonJSONRoutesProgressThroughPayloadWriter(t *testing.T) {
 	worktree := tempGitRepo(t)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), cutoverValidationYml)
 	wiring := pr.Wiring{
 		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
 		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
@@ -1267,7 +1267,7 @@ func TestPrReviewNonJSONRoutesProgressThroughPayloadWriter(t *testing.T) {
 // (the default now that pr review does not audit pending commits).
 func TestRunPrReviewReportsUnauditedCommitsWithoutBlocking(t *testing.T) {
 	worktree := tempGitRepo(t)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), cutoverValidationYml)
 	wiring := pr.Wiring{
 		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
 		SharedReviewLedger: func(string) (*review.Ledger, error) { return review.NewLedger(t.TempDir()), nil },
@@ -1309,7 +1309,7 @@ func TestRunPrReviewReportsUnauditedCommitsWithoutBlocking(t *testing.T) {
 
 func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 	worktree := tempGitRepo(t)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), cutoverValidationYml)
 	sha := strings.Repeat("a", 64)
 	wiring := pr.Wiring{
 		NewModelVerifier:   func(string) *modelprobe.Verifier { return modelprobe.NewVerifier(nil) },
@@ -1437,7 +1437,7 @@ func TestRunPrReviewSuppliesTrailerIntentsToNetReview(t *testing.T) {
 
 func TestRunPrReviewRejectsMalformedHeadBeforeSideEffects(t *testing.T) {
 	worktree := tempGitRepo(t)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), cutoverValidationYml)
 
 	calls := make(map[string]int)
 	mark := func(name string) { calls[name]++ }
@@ -1497,7 +1497,7 @@ func TestRunPrReviewAcceptsSHA1AndSHA256Heads(t *testing.T) {
 	for _, sha := range []string{strings.Repeat("a", 40), strings.Repeat("b", 64)} {
 		t.Run(fmt.Sprintf("sha-%d", len(sha)), func(t *testing.T) {
 			worktree := tempGitRepo(t)
-			writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), cutoverValidationYml)
+			writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), cutoverValidationYml)
 
 			calls := make(map[string]int)
 			mark := func(name string) { calls[name]++ }

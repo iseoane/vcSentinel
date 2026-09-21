@@ -128,8 +128,8 @@ func readAgentCapture(t *testing.T, path string) agentCapture {
 
 func TestGetCommitMessageOpenCodeWithoutDiffFailsWithoutInvokingProcess(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "feat(adapter): conservar contexto del repositorio")
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", "feat(adapter): conservar contexto del repositorio")
 	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "opencode"), Timeout: 10 * time.Second}
 
 	if _, err := adapter.GetCommitMessage([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
@@ -145,8 +145,8 @@ func TestGetCommitMessageOpenCodeWithoutDiffFailsWithoutInvokingProcess(t *testi
 // must also be blocked from generating a commit message without a micro-diff.
 func TestGetCommitMessageClaudeWithoutDiffFailsWithoutInvokingProcess(t *testing.T) {
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "feat(adapter): conservar contexto del repositorio")
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", "feat(adapter): conservar contexto del repositorio")
 	adapter := CLIAdapter{BinaryName: compileAgentBinary(t, "claude"), Timeout: 10 * time.Second}
 
 	if _, err := adapter.GetCommitMessage([]string{"internal/git/plan.go"}, "backend", 1); err == nil {
@@ -167,8 +167,8 @@ func TestGetCommitMessageWithDiffClaudeRunsIsolated(t *testing.T) {
 		t.Fatalf("could not get the current directory: %v", err)
 	}
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "fix(adapter): usar el micro diff aislado")
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", "fix(adapter): usar el micro diff aislado")
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "claude"),
 		Config:     config.AgentConfig{Model: "claude-sonnet-5", ReasoningEffort: "high"},
@@ -205,8 +205,8 @@ func TestGetCommitMessageWithDiffOpenCodeRunsIsolated(t *testing.T) {
 		t.Fatalf("could not get the current directory: %v", err)
 	}
 	capturePath := filepath.Join(t.TempDir(), "capture.json")
-	t.Setenv("VAS_SENTINEL_TEST_CAPTURE", capturePath)
-	t.Setenv("VAS_SENTINEL_TEST_OUTPUT", "{\"type\":\"step_start\"}\n{\"type\":\"text\",\"part\":{\"text\":\"fix(adapter): usar el micro diff aislado\"}}\n{\"type\":\"step_finish\"}\n")
+	t.Setenv("VCSENTINEL_TEST_CAPTURE", capturePath)
+	t.Setenv("VCSENTINEL_TEST_OUTPUT", "{\"type\":\"step_start\"}\n{\"type\":\"text\",\"part\":{\"text\":\"fix(adapter): usar el micro diff aislado\"}}\n{\"type\":\"step_finish\"}\n")
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Config:     config.AgentConfig{Model: "openai/gpt-5.6-sol", ReasoningEffort: "high"},
@@ -241,7 +241,7 @@ func TestGetCommitMessageWithDiffOpenCodeRunsIsolated(t *testing.T) {
 // claude process failure keeps the stderr detail in the returned error
 // instead of discarding it silently.
 func TestGetCommitMessageWithDiffClaudePropagatesStderrDetail(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_FAIL", "authentication expired")
+	t.Setenv("VCSENTINEL_TEST_FAIL", "authentication expired")
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "claude"),
 		Timeout:    10 * time.Second,
@@ -259,7 +259,7 @@ func TestGetCommitMessageWithDiffClaudePropagatesStderrDetail(t *testing.T) {
 // TestGetCommitMessageWithDiffOpenCodePropagatesStderrDetail mirrors
 // TestGetCommitMessageWithDiffClaudePropagatesStderrDetail for opencode.
 func TestGetCommitMessageWithDiffOpenCodePropagatesStderrDetail(t *testing.T) {
-	t.Setenv("VAS_SENTINEL_TEST_FAIL", "rate limit exceeded")
+	t.Setenv("VCSENTINEL_TEST_FAIL", "rate limit exceeded")
 	adapter := CLIAdapter{
 		BinaryName: compileAgentBinary(t, "opencode"),
 		Timeout:    10 * time.Second,
@@ -461,8 +461,8 @@ func TestRunCommandTimeoutCarriesEarlyStderr(t *testing.T) {
 	// The helper writes the refusal to stderr BEFORE sleeping past the
 	// budget: a timed-out probe must keep the agent's own words instead of
 	// collapsing to a bare "signal: killed".
-	t.Setenv("VAS_SENTINEL_TEST_STDERR_EARLY", "Error: The usage limit has been reached")
-	t.Setenv("VAS_SENTINEL_TEST_SLEEP", "30")
+	t.Setenv("VCSENTINEL_TEST_STDERR_EARLY", "Error: The usage limit has been reached")
+	t.Setenv("VCSENTINEL_TEST_SLEEP", "30")
 
 	_, err := adapter.runCommandWithTimeout("probe", 300*time.Millisecond)
 	if err == nil {

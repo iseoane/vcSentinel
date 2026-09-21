@@ -68,7 +68,7 @@ func ValidatePRReviewEntry(entry *store.PRReviewEntry, branch, head string) (rev
 	switch entry.Verdict {
 	case review.VerdictOK, review.VerdictWarn, review.VerdictBlock:
 	case review.VerdictQuestion, review.VerdictUnavailable:
-		return review.Attestation{}, fmt.Errorf("%w: verdict %q is not terminal; re-run sentinel pr review", errStoredReviewInvalid, entry.Verdict)
+		return review.Attestation{}, fmt.Errorf("%w: verdict %q is not terminal; re-run vcsentinel pr review", errStoredReviewInvalid, entry.Verdict)
 	default:
 		return review.Attestation{}, fmt.Errorf("%w: unknown verdict %q", errStoredReviewInvalid, entry.Verdict)
 	}
@@ -291,7 +291,7 @@ func isCIDetailsBlock(block string) bool {
 }
 
 func replaceAttestationMarker(body, replacement string) (string, error) {
-	const prefix = "<!-- vas-sentinel-attestation:"
+	const prefix = "<!-- vcsentinel-attestation:"
 	start := strings.Index(body, prefix)
 	if start < 0 || strings.Count(body, prefix) != 1 {
 		return "", fmt.Errorf("%w: missing or duplicate attestation marker", errStoredReviewInvalid)

@@ -26,7 +26,7 @@ var resolveRepositoryRegistryPath = func() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".vas_sentinel", "repositories.json"), nil
+	return filepath.Join(home, ".vcsentinel", "repositories.json"), nil
 }
 
 func updateRepositoryRegistry(repositoryPath string, update func(*registry.Registry, string) (bool, error)) {
@@ -40,7 +40,7 @@ func updateRepositoryRegistry(repositoryPath string, update func(*registry.Regis
 		}
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "vas-sentinel: repository registry update failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "vcsentinel: repository registry update failed: %v\n", err)
 	}
 }
 
@@ -48,8 +48,8 @@ func updateRepositoryRegistry(repositoryPath string, update func(*registry.Regis
 // stable across versions: init/uninit detect and remove it by these markers,
 // not by the inner text, so a future version can reword the text while
 // staying idempotent and leaving no orphans behind.
-const markerBegin = "<!-- vas-sentinel:begin -->"
-const markerEnd = "<!-- vas-sentinel:end -->"
+const markerBegin = "<!-- vcsentinel:begin -->"
+const markerEnd = "<!-- vcsentinel:end -->"
 
 // volumeRulesBody is the visible text of the rule, free to change its wording
 // between versions: detection does not depend on it.
@@ -58,14 +58,6 @@ const volumeRulesBody = "## CRITICAL VOLUME RULE (THE GUARDIAN)\n- Before making
 // volumeRules is the block that 'init' injects today into AGENTS.md,
 // CLAUDE.md and .claudecode.md, wrapped in markerBegin/markerEnd.
 const volumeRules = "\n" + markerBegin + "\n" + volumeRulesBody + markerEnd + "\n"
-
-// legacyVolumeRules is the EXACT block (without markers) that every version
-// before this one injected. It is frozen as-is forever: it is never written
-// again in this format, only recognized and removed, so files that already
-// carry it from previous versions (including this repo's own) can be cleaned
-// up and migrated. The Spanish text is intentional legacy payload used for
-// byte-exact legacy detection; never reword it.
-const legacyVolumeRules = "\n## REGLA CRÍTICA DE VOLUMEN (EL GUARDIÁN)\n- Antes de realizar cualquier cambio o proponer un plan, DEBES ejecutar: \"sentinel check\".\n- Si el estado es \"CRÍTICO\" (>400 líneas), tienes ESTRICTAMENTE PROHIBIDO seguir escribiendo código.\n- Debes detenerte de inmediato e invocar: \"sentinel slice\" para fragmentar el código acumulado antes de continuar.\n"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -382,7 +374,7 @@ func runInit(path string) {
 		configurationSucceeded = false
 		fmt.Printf("⚠️ Could not create the per-project configuration: %v\n", err)
 	} else {
-		fmt.Println("📄 Per-project configuration created at: .vas_sentinel/vassentinel.yml")
+		fmt.Println("📄 Per-project configuration created at: .vcsentinel/vcsentinel.yml")
 	}
 
 	fmt.Println("⚓ Git Hook 'pre-commit' installed in this repository. Environment successfully secured.")
@@ -424,14 +416,14 @@ func runUninit(path string) {
 		}
 	}
 
-	configPath := filepath.Join(path, ".vas_sentinel", "vassentinel.yml")
+	configPath := filepath.Join(path, ".vcsentinel", "vcsentinel.yml")
 	if err := os.Remove(configPath); err != nil {
 		if !os.IsNotExist(err) {
 			cleanupSucceeded = false
 			fmt.Printf("⚠️ Could not remove %s: %v\n", configPath, err)
 		}
 	} else {
-		fmt.Println("📄 Per-project configuration removed: .vas_sentinel/vassentinel.yml")
+		fmt.Println("📄 Per-project configuration removed: .vcsentinel/vcsentinel.yml")
 	}
 
 	commonDir, err := git.GetGitCommonDir(path)
@@ -453,8 +445,8 @@ func runUninit(path string) {
 
 // injectRulesIntoFile appends the managed rule when it is absent and
 // replaces it when an earlier managed version is present. Re-running init with
-// the current rule is byte-for-byte idempotent, while old marked and legacy
-// blocks are migrated to one current marked block.
+// the current rule is byte-for-byte idempotent and replaces one current marked
+// block with the latest wording.
 func injectRulesIntoFile(path string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -471,16 +463,6 @@ func injectRulesIntoFile(path string) (bool, error) {
 		return true, os.WriteFile(path, []byte(updated), 0644)
 	}
 
-	if legacyVolumeRulesPattern.MatchString(content) {
-		// removeVolumeRules (not a direct ReplaceAllString) because it removes
-		// up to the fixed point: necessary when two legacy copies are glued
-		// together with a single separating newline, see
-		// removeAllMatches in reglasvolumen.go.
-		withoutLegacy := removeVolumeRules(content)
-		updated := withoutLegacy + volumeRulesFor(content)
-		return true, os.WriteFile(path, []byte(updated), 0644)
-	}
-
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return false, err
@@ -492,11 +474,10 @@ func injectRulesIntoFile(path string) (bool, error) {
 	return true, nil
 }
 
-// removeRulesFromFile removes ALL occurrences of the volumeRules block from
-// the file when it is present and returns whether it made any change. A
+// removeRulesFromFile removes ALL occurrences of the current volumeRules block
+// from the file when it is present and returns whether it made any change. A
 // missing file or one without the block is not an error: there was simply
-// nothing to remove. Removing all occurrences also repairs the duplicates
-// older versions of init left behind.
+// nothing to remove.
 func removeRulesFromFile(path string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -261,7 +261,7 @@ func TestReadStoreReadsLedgerEventsAndRetainedMetrics(t *testing.T) {
 	}, ""); err != nil {
 		t.Fatalf("save event: %v", err)
 	}
-	if err := os.RemoveAll(filepath.Join(commonDir, "vas-sentinel", "executions", "v1", string(job.RunID()))); err != nil {
+	if err := os.RemoveAll(filepath.Join(commonDir, "vcsentinel", "executions", "v1", string(job.RunID()))); err != nil {
 		t.Fatalf("prune execution detail: %v", err)
 	}
 
@@ -303,7 +303,7 @@ func TestReadStoreKeepsDistinctAnonymousRemediationEvents(t *testing.T) {
 		data = append(data, line...)
 		data = append(data, '\n')
 	}
-	eventsPath := filepath.Join(commonDir, "vas-sentinel", "events.jsonl")
+	eventsPath := filepath.Join(commonDir, "vcsentinel", "events.jsonl")
 	if err := os.MkdirAll(filepath.Dir(eventsPath), 0755); err != nil {
 		t.Fatalf("create events directory: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestReadStoreKeepsAnonymousRemediationOutcomesDistinct(t *testing.T) {
 		data = append(data, line...)
 		data = append(data, '\n')
 	}
-	eventsPath := filepath.Join(commonDir, "vas-sentinel", "events.jsonl")
+	eventsPath := filepath.Join(commonDir, "vcsentinel", "events.jsonl")
 	if err := os.MkdirAll(filepath.Dir(eventsPath), 0755); err != nil {
 		t.Fatalf("create events directory: %v", err)
 	}
@@ -567,7 +567,7 @@ func TestReadStoreIgnoresSymlinkedEvidence(t *testing.T) {
 	if err := os.WriteFile(metricTarget, metricData, 0600); err != nil {
 		t.Fatal(err)
 	}
-	metricsDir := filepath.Join(commonDir, "vas-sentinel", "metrics", "v1")
+	metricsDir := filepath.Join(commonDir, "vcsentinel", "metrics", "v1")
 	if err := os.MkdirAll(metricsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +582,7 @@ func TestReadStoreIgnoresSymlinkedEvidence(t *testing.T) {
 	if err := os.WriteFile(findingTarget, findingData, 0600); err != nil {
 		t.Fatal(err)
 	}
-	findingsDir := filepath.Join(commonDir, "vas-sentinel", "findings")
+	findingsDir := filepath.Join(commonDir, "vcsentinel", "findings")
 	if err := os.MkdirAll(findingsDir, 0755); err != nil {
 		t.Fatal(err)
 	}

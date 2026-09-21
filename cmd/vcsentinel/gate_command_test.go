@@ -15,7 +15,7 @@ import (
 	"github.com/ISeoane-Quental/vcSentinel/internal/ops"
 )
 
-// writeTestGateYml writes a per-project vassentinel.yml for the tests of this
+// writeTestGateYml writes a per-project vcsentinel.yml for the tests of this
 // file (its own minimum: it does not depend on internal/config helpers).
 func writeTestGateYml(t *testing.T, path, content string) {
 	t.Helper()
@@ -144,7 +144,7 @@ func TestRunGate_InvalidConfigWithLine(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	configPath := filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml")
+	configPath := filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml")
 	writeTestGateYml(t, configPath, "active_agent: \"claude\"\nunknown_key: true\n")
 
 	var output bytes.Buffer

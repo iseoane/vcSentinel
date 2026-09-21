@@ -15,14 +15,14 @@ import (
 
 // TestRunCapturedCommandHelperChild is the child side of the real-subprocess
 // cancellation proof: it signals readiness by creating the file named in
-// VAS_SENTINEL_REVIEW_READY_FILE and then sleeps long enough that only a
+// VCSENTINEL_REVIEW_READY_FILE and then sleeps long enough that only a
 // context-driven kill can end it promptly. The environment guard keeps a
 // normal `go test` run from treating this as an empty test.
 func TestRunCapturedCommandHelperChild(t *testing.T) {
-	if os.Getenv("VAS_SENTINEL_REVIEW_CHILD") != "1" {
+	if os.Getenv("VCSENTINEL_REVIEW_CHILD") != "1" {
 		return
 	}
-	if ready := os.Getenv("VAS_SENTINEL_REVIEW_READY_FILE"); ready != "" {
+	if ready := os.Getenv("VCSENTINEL_REVIEW_READY_FILE"); ready != "" {
 		file, err := os.Create(ready)
 		if err == nil {
 			_ = file.Close()
@@ -71,8 +71,8 @@ func TestRunCapturedCommandKillsChildOnContextCancellation(t *testing.T) {
 	start := time.Now()
 	go func() {
 		env := append(os.Environ(),
-			"VAS_SENTINEL_REVIEW_CHILD=1",
-			"VAS_SENTINEL_REVIEW_READY_FILE="+readyFile,
+			"VCSENTINEL_REVIEW_CHILD=1",
+			"VCSENTINEL_REVIEW_READY_FILE="+readyFile,
 		)
 		_, _, err := runCapturedCommand(parent, name, args, env, "", "")
 		done <- err

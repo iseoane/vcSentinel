@@ -264,7 +264,7 @@ func reviewFindingFromFinding(h Finding) ReviewFinding {
 }
 
 // Record is the complete audit record of a commit, saved as
-// <git-common-dir>/vas-sentinel/<sha>.json. FixedIn is the SHA of the first commit
+// <git-common-dir>/vcsentinel/<sha>.json. FixedIn is the SHA of the first commit
 // credited with fixing the findings (filled in when a fix touches the files).
 // It is provenance only: whether the record still blocks is decided by its
 // current findings (RecordHasActiveBlock), not by this field.
@@ -290,19 +290,19 @@ type Ledger struct {
 	releaseLockFile func(string) error
 }
 
-// NewLedger creates a ledger anchored at <gitDir>/vas-sentinel. It does not
+// NewLedger creates a ledger anchored at <gitDir>/vcsentinel. It does not
 // create the directory: that happens on the first write.
 //
 // It files records under whatever directory it is given and imposes no
 // choice, exactly like store.NewStore. Callers that read or write review
 // evidence must pass the Git common directory so linked worktrees share one
 // ledger; passing a per-checkout gitDir files the record where `git
-// worktree remove` destroys it. In cmd/sentinel that choice lives in
+// worktree remove` destroys it. In cmd/vcsentinel that choice lives in
 // sharedReviewLedger. The exception is `runs prune`, which enumerates every
 // per-checkout ledger on purpose so no execution stream loses its
 // provenance.
 func NewLedger(gitDir string) *Ledger {
-	return &Ledger{dir: filepath.Join(gitDir, "vas-sentinel"), releaseLockFile: os.Remove}
+	return &Ledger{dir: filepath.Join(gitDir, "vcsentinel"), releaseLockFile: os.Remove}
 }
 
 // RecordPath returns the file path of a SHA's record.
@@ -399,7 +399,7 @@ var ErrLockNotReleased = errors.New("the review record operation completed but i
 // eight.
 //
 // The lock is a file created with O_EXCL, which is atomic on POSIX and on
-// Windows. It is advisory and only between sentinel processes; nothing
+// Windows. It is advisory and only between vcSentinel processes; nothing
 // stops an editor from rewriting a record by hand. Its name ends in .lock
 // and not .json, so ListRecords never reports it as a SHA.
 //
@@ -452,7 +452,7 @@ func (l *Ledger) withRecordLock(sha string, fn func() error) (err error) {
 			return fmt.Errorf("locking the review record of %s: %w", sha, openErr)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("the review record of %s stayed locked for %s; if no sentinel process is running, delete %s",
+			return fmt.Errorf("the review record of %s stayed locked for %s; if no vcSentinel process is running, delete %s",
 				sha, maxRecordLockWait, lockPath)
 		}
 		time.Sleep(recordLockRetryInterval)

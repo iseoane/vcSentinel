@@ -205,7 +205,7 @@ func TestGateDurableSettlementFailureIsHonestInfrastructure(t *testing.T) {
 		if len(jobs) == 0 {
 			t.Fatal("fixture drift: no validation jobs planned")
 		}
-		jobDir := filepath.Join(commonDir, "vas-sentinel", "executions", "v1", string(jobs[0].Job.RunID()))
+		jobDir := filepath.Join(commonDir, "vcsentinel", "executions", "v1", string(jobs[0].Job.RunID()))
 		opts.RunValidation = func(profile string, scope []string, o validation.RunOptions) ([]validation.ValidationRun, error) {
 			if err := os.WriteFile(jobDir, []byte("not a directory"), 0o644); err != nil {
 				t.Fatalf("sabotage failed: %v", err)

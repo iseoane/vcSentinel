@@ -171,9 +171,8 @@ const staleSnapshotAge = time.Hour
 // forever: 472 MB were measured on one machine, in a 3.8 GB tmpfs where filling
 // /tmp breaks not just reviews but compilation.
 //
-// Legacy per-invocation snapshot directories — the vas-sentinel-review-*
-// prefix this package created before snapshots became shared and reusable —
-// are removed purely by age, exactly as before. Shared-store entries are
+// Per-invocation snapshot directories under the vcsentinel prefix are removed
+// purely by age. Shared-store entries are
 // removed lock-aware: reapSharedStore takes each candidate SHA's nonblocking
 // exclusive lock first, so a tree a live lease still holds in any process is
 // skipped even when its directory already looks stale, while abandoned
@@ -182,8 +181,8 @@ const staleSnapshotAge = time.Hour
 //
 // It is best-effort by contract: every error is ignored, because failing to
 // tidy must never fail the review that was about to start. It only ever
-// touches entries carrying this package's own names: the legacy temporary
-// prefix and the shared store directory.
+// touches entries carrying this package's own names: the temporary prefix and
+// the shared store directory.
 func reapAbandonedSnapshots(now time.Time, maxAge time.Duration) int {
 	raiz := os.TempDir()
 	entradas, err := os.ReadDir(raiz)
@@ -223,11 +222,10 @@ func reapAbandonedSnapshots(now time.Time, maxAge time.Duration) int {
 	return recolectados + reapSharedStore(sharedRoot, now, maxAge) + reapSharedStoreCapacity(sharedRoot)
 }
 
-// snapshotPrefix identifies this package's LEGACY per-invocation temporary
-// directories. Nothing creates them anymore — snapshots are shared and
-// reusable now — but the reaper keeps cleaning them so machines upgraded
-// mid-flight do not accumulate residue forever.
-const snapshotPrefix = "vas-sentinel-review-"
+// snapshotPrefix identifies this package's per-invocation temporary
+// directories. Shared snapshots use the store root, while these short-lived
+// directories are reaped by age after an interrupted review.
+const snapshotPrefix = "vcsentinel-review-"
 
 // bunResidueSuffix is the literal tail of the Bun runtime's residue files. The
 // restricted reviewer's Bun runtime writes ".<hex>-00000000.so" files into the

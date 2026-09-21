@@ -60,7 +60,7 @@ func runGate(w io.Writer, worktree string, args []string) int {
 	}
 
 	if _, ok := cfg.Validation.Profiles[profile]; !ok {
-		fmt.Fprintf(w, "❌ The validation profile %q is not configured. Define validation.profiles.%s in vassentinel.yml or pass --profile with an existing profile.\n", profile, profile)
+		fmt.Fprintf(w, "❌ The validation profile %q is not configured. Define validation.profiles.%s in vcsentinel.yml or pass --profile with an existing profile.\n", profile, profile)
 		return finalizeGate(w, worktree, stage, gate.StateInfrastructureError, nil)
 	}
 

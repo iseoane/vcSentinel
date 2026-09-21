@@ -63,7 +63,7 @@ func TestRegisterCommitBlobsMergesDisjointSets(t *testing.T) {
 func TestStoreCommitIndexCorruptIsError(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	path := filepath.Join(dir, "vas-sentinel", subdirCommits, "abc123.json")
+	path := filepath.Join(dir, "vcsentinel", subdirCommits, "abc123.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}

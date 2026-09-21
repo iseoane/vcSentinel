@@ -831,7 +831,7 @@ func TestPlanForProfileUsesCompleteRiskSignals(t *testing.T) {
 		Kind:    "dependency",
 		Symbols: change.ChangeSymbols{Complete: true},
 	}
-	plan := PlanForProfile(profile, []string{"internal/backend/auth.go", "vassentinel.yml"}, "", "")
+	plan := PlanForProfile(profile, []string{"internal/backend/auth.go", "vcsentinel.yml"}, "", "")
 	if plan.Risk.Level != risk.LevelHigh || !hasBundle(plan.Bundles, BundleSecurity) {
 		t.Fatalf("plan = %+v, expected high risk with security coverage", plan)
 	}

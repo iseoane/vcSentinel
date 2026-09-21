@@ -134,7 +134,7 @@ func ledgerV1Directories(gitCommonDir string) ([]string, error) {
 			continue // not a worktree administrative directory
 		}
 		gitDir := filepath.Join(root, entry.Name())
-		path := filepath.Join(gitDir, "vas-sentinel")
+		path := filepath.Join(gitDir, "vcsentinel")
 
 		// Absence and malformation are separated with Lstat before Stat. Stat
 		// alone follows symlinks, so a dangling ledger symlink reports

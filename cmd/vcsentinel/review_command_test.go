@@ -1093,9 +1093,9 @@ func runAsSubprocessSplit(t *testing.T, fn, worktree, home string, extraEnv ...s
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcess$")
 	cmd.Dir = worktree
 	env := []string{
-		"VAS_SENTINEL_HELPER_PROCESS=1",
-		"VAS_SENTINEL_HELPER_FN=" + fn,
-		"VAS_SENTINEL_HELPER_WORKTREE=" + worktree,
+		"VCSENTINEL_HELPER_PROCESS=1",
+		"VCSENTINEL_HELPER_FN=" + fn,
+		"VCSENTINEL_HELPER_WORKTREE=" + worktree,
 		"HOME=" + home,
 		"USERPROFILE=" + home,
 	}
@@ -1106,7 +1106,7 @@ func runAsSubprocessSplit(t *testing.T, fn, worktree, home string, extraEnv ...s
 	}
 	for _, kv := range os.Environ() {
 		key := strings.SplitN(kv, "=", 2)[0]
-		if key == "HOME" || key == "USERPROFILE" || strings.HasPrefix(kv, "VAS_SENTINEL_HELPER_") || override[key] {
+		if key == "HOME" || key == "USERPROFILE" || strings.HasPrefix(kv, "VCSENTINEL_HELPER_") || override[key] {
 			continue
 		}
 		env = append(env, kv)
@@ -1134,7 +1134,7 @@ func runAsSubprocessSplit(t *testing.T, fn, worktree, home string, extraEnv ...s
 func TestRunReviewJSONKeepsSpinnerOffStdout(t *testing.T) {
 	worktree := cutoverRepository(t)
 	home := t.TempDir()
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), reviewAgentYml)
 	fakeBin := t.TempDir()
 	for _, name := range []string{"claude", "opencode"} {
 		script := "#!/bin/sh\ncat > /dev/null\necho stub-agent-answer\n"
@@ -1158,7 +1158,7 @@ func TestRunReviewJSONKeepsSpinnerOffStdout(t *testing.T) {
 func TestRunReviewReusedSpecPrintsAndExitsFromMergedRevision(t *testing.T) {
 	worktree := cutoverRepository(t)
 	t.Chdir(worktree)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), reviewAgentYml)
 	sha := strings.TrimSpace(gitOutputForReviewCommand(t, worktree, "rev-parse", "HEAD"))
 	files, err := git.FilesOfCommit(sha)
 	if err != nil {
@@ -1205,7 +1205,7 @@ printf '%s\n' '{"type":"result","subtype":"success","stop_reason":"end_turn","re
 func TestRunReviewRefusesDimsOnReusedCommit(t *testing.T) {
 	worktree := cutoverRepository(t)
 	t.Chdir(worktree)
-	writeTestGateYml(t, filepath.Join(worktree, ".vas_sentinel", "vassentinel.yml"), reviewAgentYml)
+	writeTestGateYml(t, filepath.Join(worktree, ".vcsentinel", "vcsentinel.yml"), reviewAgentYml)
 	sha := strings.TrimSpace(gitOutputForReviewCommand(t, worktree, "rev-parse", "HEAD"))
 	files, err := git.FilesOfCommit(sha)
 	if err != nil {
