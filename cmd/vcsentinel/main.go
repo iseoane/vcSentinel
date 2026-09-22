@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -440,10 +441,9 @@ func runInit(path string) {
 		os.Exit(1)
 	}
 
-	scriptContent := generateHookScript()
 	hookPath := filepath.Join(hooksDir, "pre-commit")
-	if err := os.WriteFile(hookPath, []byte(scriptContent), 0755); err != nil {
-		fmt.Printf("❌ Could not write the hook to %s: %v\n", hookPath, err)
+	if err := installPreCommitHook(hookPath); err != nil {
+		fmt.Printf("❌ Could not install the hook at %s: %v\n", hookPath, err)
 		os.Exit(1)
 	}
 
@@ -648,48 +648,724 @@ func removeRulesFromFile(path string) (bool, error) {
 	return true, os.WriteFile(path, []byte(updated), 0644)
 }
 
-// removeHookIfVCSentinelOwned deletes the pre-commit hook at hookPath only if
-// its content exactly matches what generateHookScript produces now;
-// if it differs (another origin) or does not exist, it is left alone.
+const (
+	hookOriginalSuffix            = ".vcsentinel-original"
+	hookTransactionSuffix         = ".vcsentinel-transaction"
+	hookTransactionMarker         = "# vcsentinel:pre-commit-transaction:v1"
+	hookTransactionPhasePrefix    = "# vcsentinel:phase="
+	hookTransactionWrapperPrefix  = "# vcsentinel:wrapper-sha256="
+	hookTransactionOriginalPrefix = "# vcsentinel:original-sha256="
+	hookTransactionModePrefix     = "# vcsentinel:original-mode="
+	hookTransactionKindPrefix     = "# vcsentinel:original-kind="
+	hookDirectMarker              = "# vcsentinel:pre-commit-hook:v1"
+	hookDirectExecutablePrefix    = "# vcsentinel:executable="
+	hookWrapperMarker             = "# vcsentinel:pre-commit-wrapper:v1"
+	hookWrapperOriginalPathPrefix = "# vcsentinel:original-path="
+	hookWrapperOriginalKindPrefix = "# vcsentinel:original-kind="
+	hookWrapperOriginalModePrefix = "# vcsentinel:original-mode="
+	hookWrapperOriginalHashPrefix = "# vcsentinel:original-sha256="
+	hookWrapperExecutablePrefix   = "# vcsentinel:executable="
+)
+
+type hookWrapperMetadata struct {
+	executablePath string
+	originalPath   string
+	originalKind   string
+	originalMode   os.FileMode
+	originalHash   string
+}
+
+type hookTransaction struct {
+	phase        string
+	wrapperHash  string
+	originalHash string
+	originalMode os.FileMode
+	originalKind string
+}
+
+func hookTransactionPath(hookPath string) string {
+	return hookPath + hookTransactionSuffix
+}
+
+func beginHookTransaction(hookPath, phase, wrapperHash, originalHash string, originalMode os.FileMode, originalKind string) error {
+	path := hookTransactionPath(hookPath)
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("hook transaction already exists at %s", path)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	content := hookTransactionMarker + "\n" + hookTransactionPhasePrefix + phase + "\n" +
+		hookTransactionOriginalPrefix + originalHash + "\n" +
+		fmt.Sprintf("%s%04o\n", hookTransactionModePrefix, originalMode.Perm()) +
+		hookTransactionKindPrefix + originalKind + "\n"
+	if wrapperHash != "" {
+		content += hookTransactionWrapperPrefix + wrapperHash + "\n"
+	}
+	return os.WriteFile(path, []byte(content), 0600)
+}
+
+func clearHookTransaction(hookPath string) error {
+	err := os.Remove(hookTransactionPath(hookPath))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+func readHookTransaction(hookPath string) (hookTransaction, bool, error) {
+	content, err := os.ReadFile(hookTransactionPath(hookPath))
+	if os.IsNotExist(err) {
+		return hookTransaction{}, false, nil
+	}
+	if err != nil {
+		return hookTransaction{}, true, err
+	}
+	text := string(content)
+	if !strings.HasPrefix(text, hookTransactionMarker+"\n") {
+		return hookTransaction{}, true, errors.New("invalid vcSentinel hook transaction marker")
+	}
+	phase := wrapperValue(text, hookTransactionPhasePrefix)
+	wrapperHash := wrapperValue(text, hookTransactionWrapperPrefix)
+	originalHash := wrapperValue(text, hookTransactionOriginalPrefix)
+	modeText := wrapperValue(text, hookTransactionModePrefix)
+	originalKind := wrapperValue(text, hookTransactionKindPrefix)
+	if phase != "install" && phase != "restore" || originalHash == "" || modeText == "" || originalKind == "" {
+		return hookTransaction{}, true, errors.New("incomplete vcSentinel hook transaction")
+	}
+	if phase == "restore" && wrapperHash == "" {
+		return hookTransaction{}, true, errors.New("restore transaction has no wrapper hash")
+	}
+	mode, err := strconv.ParseUint(modeText, 8, 32)
+	if err != nil {
+		return hookTransaction{}, true, fmt.Errorf("invalid transaction hook mode: %w", err)
+	}
+	if originalKind != "regular" && originalKind != "symlink" {
+		return hookTransaction{}, true, fmt.Errorf("invalid transaction hook kind %q", originalKind)
+	}
+	return hookTransaction{phase, wrapperHash, originalHash, os.FileMode(mode), originalKind}, true, nil
+}
+
+func hookExists(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func recoverHookTransaction(hookPath string) error {
+	transaction, exists, err := readHookTransaction(hookPath)
+	if err != nil || !exists {
+		return err
+	}
+	if transaction.phase == "install" {
+		return recoverInstallTransaction(hookPath, transaction)
+	}
+	return recoverRestoreTransaction(hookPath, transaction)
+}
+
+func recoverOrphanedHookBackup(hookPath string) (bool, error) {
+	hook, err := hookExists(hookPath)
+	if err != nil {
+		return false, err
+	}
+	if hook {
+		return false, nil
+	}
+	temporary, err := hookExists(hookPath + ".vcsentinel-wrapper")
+	if err != nil {
+		return false, err
+	}
+	backup, err := hookExists(originalHookPath(hookPath))
+	if err != nil {
+		return false, err
+	}
+	if temporary || backup {
+		return false, errors.New("orphaned hook state has no valid vcSentinel transaction")
+	}
+	return false, nil
+}
+
+// Hook markers are local coordination state, not cryptographic authentication.
+// Recovery trusts them only when the recorded type, mode, and content hashes
+// agree with the filesystem; every conflict fails closed for manual recovery.
+func hookMatchesTransaction(path string, transaction hookTransaction) (bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if hookFileKind(info) != transaction.originalKind || info.Mode().Perm() != transaction.originalMode.Perm() {
+		return false, nil
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	return hookContentHash(content) == transaction.originalHash, nil
+}
+
+func requireHookMatchesTransaction(path string, transaction hookTransaction) error {
+	valid, err := hookMatchesTransaction(path, transaction)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return errors.New("recovered hook does not match transaction original metadata")
+	}
+	return nil
+}
+
+func recoverInstallTransaction(hookPath string, transaction hookTransaction) error {
+	backupPath := originalHookPath(hookPath)
+	hook, err := hookExists(hookPath)
+	if err != nil {
+		return err
+	}
+	backup, err := hookExists(backupPath)
+	if err != nil {
+		return err
+	}
+	if backup {
+		valid, err := hookMatchesTransaction(backupPath, transaction)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return errors.New("interrupted hook installation has an unverified original sidecar")
+		}
+	}
+	switch {
+	case !hook && backup:
+		if err := os.Rename(backupPath, hookPath); err != nil {
+			return err
+		}
+		if err := requireHookMatchesTransaction(hookPath, transaction); err != nil {
+			return err
+		}
+		return clearHookTransaction(hookPath)
+	case hook && !backup:
+		return errors.New("interrupted hook installation is missing its original sidecar")
+	case hook && backup:
+		current, err := os.ReadFile(hookPath)
+		if err != nil {
+			return err
+		}
+		if valid, _ := isValidChainedHook(hookPath, current); valid {
+			return clearHookTransaction(hookPath)
+		}
+		return errors.New("interrupted hook installation has conflicting hook and backup state")
+	default:
+		return errors.New("interrupted hook installation has no recoverable original hook")
+	}
+}
+
+func recoverRestoreTransaction(hookPath string, transaction hookTransaction) error {
+	backupPath := originalHookPath(hookPath)
+	temporaryPath := hookPath + ".vcsentinel-wrapper"
+	hook, err := hookExists(hookPath)
+	if err != nil {
+		return err
+	}
+	temporary, err := hookExists(temporaryPath)
+	if err != nil {
+		return err
+	}
+	backup, err := hookExists(backupPath)
+	if err != nil {
+		return err
+	}
+	if backup {
+		valid, err := hookMatchesTransaction(backupPath, transaction)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return errors.New("interrupted hook restoration has an unverified original sidecar")
+		}
+	}
+	switch {
+	case !hook && temporary && backup:
+		content, err := os.ReadFile(temporaryPath)
+		if err != nil || hookContentHash(content) != transaction.wrapperHash {
+			if err != nil {
+				return err
+			}
+			return errors.New("interrupted hook restoration found a modified wrapper")
+		}
+		if err := os.Rename(temporaryPath, hookPath); err != nil {
+			return err
+		}
+		current, err := os.ReadFile(hookPath)
+		if err != nil {
+			return err
+		}
+		if valid, _ := isValidChainedHook(hookPath, current); !valid {
+			return errors.New("interrupted hook restoration produced an unverified wrapper")
+		}
+		return clearHookTransaction(hookPath)
+	case !hook && !temporary && backup:
+		if err := os.Rename(backupPath, hookPath); err != nil {
+			return err
+		}
+		if err := requireHookMatchesTransaction(hookPath, transaction); err != nil {
+			return err
+		}
+		return clearHookTransaction(hookPath)
+	case hook && temporary && !backup:
+		content, err := os.ReadFile(temporaryPath)
+		if err != nil {
+			return err
+		}
+		if hookContentHash(content) != transaction.wrapperHash {
+			return errors.New("interrupted hook restoration found a modified wrapper")
+		}
+		if err := requireHookMatchesTransaction(hookPath, transaction); err != nil {
+			return err
+		}
+		if err := os.Remove(temporaryPath); err != nil {
+			return err
+		}
+		return clearHookTransaction(hookPath)
+	case hook && !temporary && !backup:
+		if err := requireHookMatchesTransaction(hookPath, transaction); err != nil {
+			return err
+		}
+		return clearHookTransaction(hookPath)
+	case hook && backup && !temporary:
+		content, err := os.ReadFile(hookPath)
+		if err != nil {
+			return err
+		}
+		if valid, _ := isValidChainedHook(hookPath, content); valid {
+			return clearHookTransaction(hookPath)
+		}
+		return errors.New("interrupted hook restoration has conflicting hook and backup state")
+	default:
+		return errors.New("interrupted hook restoration has no safe recovery path")
+	}
+}
+
+func installPreCommitHook(hookPath string) error {
+	return installPreCommitHookFor(hookPath, vcsentinelExecutablePath())
+}
+
+func installPreCommitHookFor(hookPath, executablePath string) error {
+	if err := recoverHookTransaction(hookPath); err != nil {
+		return err
+	}
+	currentInfo, err := os.Lstat(hookPath)
+	if os.IsNotExist(err) {
+		recovered, err := recoverOrphanedHookBackup(hookPath)
+		if err != nil {
+			return err
+		}
+		if recovered {
+			return installPreCommitHookFor(hookPath, executablePath)
+		}
+		return createHookFile(hookPath, generateHookScriptFor(executablePath), 0755)
+	}
+	if err != nil {
+		return err
+	}
+	current, err := os.ReadFile(hookPath)
+	if err != nil {
+		return err
+	}
+	currentText := string(current)
+	if isVCSentinelHookScript(currentText) {
+		return nil
+	}
+	if hasHookWrapperMarker(currentText) {
+		if valid, _ := isValidChainedHook(hookPath, current); valid {
+			return nil
+		}
+		fmt.Println("⚠️ The existing vcSentinel pre-commit wrapper was modified or could not be verified: leaving it untouched.")
+		return nil
+	}
+	kind := hookFileKind(currentInfo)
+	if kind == "" {
+		fmt.Println("⚠️ The existing pre-commit hook is not a regular file or symlink: leaving it untouched.")
+		return nil
+	}
+
+	backupPath := originalHookPath(hookPath)
+	if _, err := os.Lstat(backupPath); err == nil {
+		fmt.Printf("⚠️ A vcSentinel hook backup already exists at %s: leaving the current pre-commit hook untouched.\n", backupPath)
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := beginHookTransaction(hookPath, "install", "", hookContentHash(current), currentInfo.Mode().Perm(), kind); err != nil {
+		return err
+	}
+	if err := os.Rename(hookPath, backupPath); err != nil {
+		_ = clearHookTransaction(hookPath)
+		return err
+	}
+	restore := func(cause error) error {
+		if _, err := os.Lstat(hookPath); err == nil {
+			return fmt.Errorf("%v; cannot restore the preserved hook because %s now exists", cause, hookPath)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("%v; cannot restore the preserved hook: %w", cause, err)
+		}
+		if err := os.Rename(backupPath, hookPath); err != nil {
+			return fmt.Errorf("%v; could not restore the preserved hook: %w", cause, err)
+		}
+		if err := clearHookTransaction(hookPath); err != nil {
+			return fmt.Errorf("%v; restored the preserved hook but could not clear transaction state: %w", cause, err)
+		}
+		return cause
+	}
+	backupInfo, err := os.Lstat(backupPath)
+	if err != nil {
+		return restore(err)
+	}
+	original, err := os.ReadFile(backupPath)
+	if err != nil {
+		return restore(err)
+	}
+	metadata := hookWrapperMetadata{executablePath, backupPath, kind, backupInfo.Mode().Perm(), hookContentHash(original)}
+	if err := createHookFile(hookPath, generateChainedHookScriptFor(metadata), 0755); err != nil {
+		return restore(err)
+	}
+	if err := clearHookTransaction(hookPath); err != nil {
+		return err
+	}
+	fmt.Printf("⚓ Existing pre-commit hook preserved at %s and chained with vcSentinel.\n", backupPath)
+	return nil
+}
+
+func createHookFile(path, content string, mode os.FileMode) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
+	if err != nil {
+		return err
+	}
+	fail := func(err error) error {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if _, err := file.WriteString(content); err != nil {
+		return fail(err)
+	}
+	if err := file.Chmod(mode.Perm()); err != nil {
+		return fail(err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+func originalHookPath(hookPath string) string {
+	return hookPath + hookOriginalSuffix
+}
+
+func hookFileKind(info os.FileInfo) string {
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "symlink"
+	}
+	if info.Mode().IsRegular() {
+		return "regular"
+	}
+	return ""
+}
+
+func hookContentHash(content []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(content))
+}
+
+func hasHookWrapperMarker(content string) bool {
+	return strings.HasPrefix(content, "#!/bin/sh\n"+hookWrapperMarker+"\n")
+}
+
+func wrapperValue(content, prefix string) string {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimPrefix(line, prefix)
+		}
+	}
+	return ""
+}
+
+func parseHookWrapper(content string) (hookWrapperMetadata, error) {
+	if !hasHookWrapperMarker(content) {
+		return hookWrapperMetadata{}, errors.New("missing vcSentinel wrapper marker")
+	}
+	path := wrapperValue(content, hookWrapperOriginalPathPrefix)
+	kind := wrapperValue(content, hookWrapperOriginalKindPrefix)
+	modeText := wrapperValue(content, hookWrapperOriginalModePrefix)
+	hash := wrapperValue(content, hookWrapperOriginalHashPrefix)
+	executable := wrapperValue(content, hookWrapperExecutablePrefix)
+	if path == "" || kind == "" || modeText == "" || hash == "" || executable == "" {
+		return hookWrapperMetadata{}, errors.New("incomplete vcSentinel wrapper metadata")
+	}
+	mode, err := strconv.ParseUint(modeText, 8, 32)
+	if err != nil {
+		return hookWrapperMetadata{}, fmt.Errorf("invalid original hook mode: %w", err)
+	}
+	if kind != "regular" && kind != "symlink" {
+		return hookWrapperMetadata{}, fmt.Errorf("invalid original hook kind %q", kind)
+	}
+	return hookWrapperMetadata{executable, filepath.FromSlash(path), kind, os.FileMode(mode), hash}, nil
+}
+
+func isValidChainedHook(hookPath string, content []byte) (bool, error) {
+	metadata, err := parseHookWrapper(string(content))
+	if err != nil {
+		return false, err
+	}
+	if filepath.Clean(metadata.originalPath) != filepath.Clean(originalHookPath(hookPath)) || string(content) != generateChainedHookScriptFor(metadata) {
+		return false, nil
+	}
+	info, err := os.Lstat(metadata.originalPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if hookFileKind(info) != metadata.originalKind || info.Mode().Perm() != metadata.originalMode.Perm() {
+		return false, nil
+	}
+	original, err := os.ReadFile(metadata.originalPath)
+	if err != nil {
+		return false, err
+	}
+	return hookContentHash(original) == metadata.originalHash, nil
+}
+
+// removeHookIfVCSentinelOwned removes a direct vcSentinel hook or restores a
+// valid chained hook. Foreign or modified hooks remain untouched with a
+// warning so uninit never deletes repository behavior it does not own.
 func removeHookIfVCSentinelOwned(hookPath string) error {
+	if err := recoverHookTransaction(hookPath); err != nil {
+		return err
+	}
+	if _, err := recoverOrphanedHookBackup(hookPath); err != nil {
+		return err
+	}
 	current, err := os.ReadFile(hookPath)
 	switch {
 	case os.IsNotExist(err):
 		return nil
 	case err != nil:
 		return err
-	case string(current) != generateHookScript():
-		fmt.Println("⚠️ The current 'pre-commit' hook does not match the one installed by vcSentinel: leaving it untouched.")
+	}
+
+	if isVCSentinelHookScript(string(current)) {
+		if err := os.Remove(hookPath); err != nil {
+			return err
+		}
+		fmt.Println("⚓ Hook 'pre-commit' removed.")
 		return nil
 	}
-	if err := os.Remove(hookPath); err != nil {
-		return err
+
+	if hasHookWrapperMarker(string(current)) {
+		valid, validationErr := isValidChainedHook(hookPath, current)
+		if !valid {
+			if validationErr != nil {
+				fmt.Printf("⚠️ The vcSentinel pre-commit wrapper could not be verified (%v): leaving it untouched.\n", validationErr)
+			} else {
+				fmt.Println("⚠️ The vcSentinel pre-commit wrapper was modified: leaving it untouched.")
+			}
+			return nil
+		}
+		metadata, err := parseHookWrapper(string(current))
+		if err != nil {
+			return err
+		}
+		return restoreChainedHook(hookPath, metadata, hookContentHash(current))
 	}
-	fmt.Println("⚓ Hook 'pre-commit' removed.")
+
+	fmt.Println("⚠️ The current 'pre-commit' hook does not belong to vcSentinel: leaving it untouched.")
 	return nil
 }
 
-// generateHookScript returns the pre-commit hook content adapted to the
-// operating system where the initializer runs. It uses the absolute path of
-// the running binary so it does not depend on the hook shell's PATH.
-func generateHookScript() string {
+func restoreChainedHook(hookPath string, metadata hookWrapperMetadata, wrapperHash string) error {
+	backupPath := metadata.originalPath
+	temporaryPath := hookPath + ".vcsentinel-wrapper"
+	if _, err := os.Lstat(temporaryPath); err == nil {
+		return fmt.Errorf("cannot restore the original hook because %s already exists", temporaryPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := beginHookTransaction(hookPath, "restore", wrapperHash, metadata.originalHash, metadata.originalMode, metadata.originalKind); err != nil {
+		return err
+	}
+	if err := os.Rename(hookPath, temporaryPath); err != nil {
+		_ = clearHookTransaction(hookPath)
+		return err
+	}
+	if err := os.Rename(backupPath, hookPath); err != nil {
+		if rollbackErr := os.Rename(temporaryPath, hookPath); rollbackErr == nil {
+			_ = clearHookTransaction(hookPath)
+		}
+		return err
+	}
+	if err := requireHookMatchesTransaction(hookPath, hookTransaction{
+		originalHash: metadata.originalHash,
+		originalMode: metadata.originalMode,
+		originalKind: metadata.originalKind,
+	}); err != nil {
+		return fmt.Errorf("restored original hook failed post-rename validation: %w", err)
+	}
+	if err := os.Remove(temporaryPath); err != nil {
+		return fmt.Errorf("original hook restored but wrapper cleanup failed: %w", err)
+	}
+	if err := clearHookTransaction(hookPath); err != nil {
+		return err
+	}
+	fmt.Println("⚓ Original 'pre-commit' hook restored.")
+	return nil
+}
+
+func isVCSentinelHookScript(content string) bool {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 5 && lines[0] == "#!/bin/sh" && lines[1] == hookDirectMarker && strings.HasPrefix(lines[2], hookDirectExecutablePrefix) {
+		declared := filepath.FromSlash(strings.TrimPrefix(lines[2], hookDirectExecutablePrefix))
+		command, ok := parseHookExecutable(lines[3])
+		return ok && filepath.ToSlash(command) == filepath.ToSlash(declared) && isKnownVCSentinelExecutable(declared)
+	}
+	if len(lines) == 3 && lines[0] == "#!/bin/sh" {
+		command, ok := parseHookExecutable(lines[1])
+		return ok && isKnownVCSentinelExecutable(command)
+	}
+	return false
+}
+
+func parseHookExecutable(line string) (string, bool) {
+	if !strings.HasSuffix(line, " check --staged") {
+		return "", false
+	}
+	token := strings.TrimSuffix(line, " check --staged")
+	switch {
+	case strings.HasPrefix(token, "'") && strings.HasSuffix(token, "'"):
+		value := strings.TrimSuffix(strings.TrimPrefix(token, "'"), "'")
+		return filepath.FromSlash(strings.ReplaceAll(value, "'\"'\"'", "'")), true
+	case strings.HasPrefix(token, "\"") && strings.HasSuffix(token, "\""):
+		value := strings.TrimSuffix(strings.TrimPrefix(token, "\""), "\"")
+		if strings.Contains(value, "\"") {
+			return "", false
+		}
+		return filepath.FromSlash(value), true
+	default:
+		return "", false
+	}
+}
+
+func isKnownVCSentinelExecutable(path string) bool {
+	candidate := canonicalExecutablePath(path)
+	if sameExecutablePath(candidate, canonicalExecutablePath(vcsentinelExecutablePath())) {
+		return true
+	}
+	for _, supported := range supportedVCSentinelExecutablePaths() {
+		if sameExecutablePath(candidate, canonicalExecutablePath(supported)) {
+			return verifyInstalledVCSentinelExecutable(path)
+		}
+	}
+	return false
+}
+
+func canonicalExecutablePath(path string) string {
+	absolute, err := filepath.Abs(path)
+	if err == nil {
+		path = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return filepath.Clean(path)
+}
+
+func sameExecutablePath(left, right string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
+
+func supportedVCSentinelExecutablePaths() []string {
+	if runtime.GOOS == "windows" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil
+		}
+		return []string{filepath.Join(home, ".vcsentinel", "bin", "vcsentinel.exe")}
+	}
+	return []string{"/usr/local/bin/vcsentinel"}
+}
+
+func verifyInstalledVCSentinelExecutable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	output, err := exec.Command(path, "--version").Output()
+	return err == nil && strings.Contains(string(output), "vcSentinel version:")
+}
+
+func vcsentinelExecutablePath() string {
 	exe, err := os.Executable()
 	if err != nil {
-		exe = "vcsentinel"
+		return "vcsentinel"
 	}
-	return generateHookScriptFor(exe)
+	return exe
+}
+
+// generateHookScript returns the marked direct hook used by new installations.
+func generateHookScript() string {
+	return generateHookScriptFor(vcsentinelExecutablePath())
+}
+
+func generateChainedHookScriptFor(metadata hookWrapperMetadata) string {
+	originalPath := filepath.ToSlash(metadata.originalPath)
+	executablePath := filepath.ToSlash(metadata.executablePath)
+	return "#!/bin/sh\n" +
+		hookWrapperMarker + "\n" +
+		hookWrapperOriginalPathPrefix + originalPath + "\n" +
+		hookWrapperOriginalKindPrefix + metadata.originalKind + "\n" +
+		fmt.Sprintf("%s%04o\n", hookWrapperOriginalModePrefix, metadata.originalMode.Perm()) +
+		hookWrapperOriginalHashPrefix + metadata.originalHash + "\n" +
+		hookWrapperExecutablePrefix + executablePath + "\n" +
+		"original_status=0\n" +
+		shellQuote(originalPath) + " \"$@\" || original_status=$?\n" +
+		"vcsentinel_status=0\n" +
+		shellQuote(executablePath) + " check --staged || vcsentinel_status=$?\n" +
+		"if [ \"$original_status\" -ne 0 ]; then\n" +
+		"  exit \"$original_status\"\n" +
+		"fi\n" +
+		"exit \"$vcsentinel_status\"\n"
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func generateHookScriptFor(exe string) string {
+	executable := filepath.ToSlash(exe)
+	return "#!/bin/sh\n" + hookDirectMarker + "\n" + hookDirectExecutablePrefix + executable + "\n" + hookCommandFor(exe)
+}
+
+func generateLegacyHookScriptFor(exe string) string {
+	return "#!/bin/sh\n\"" + filepath.ToSlash(exe) + "\" check --staged\n"
+}
+
+func hookCommandFor(exe string) string {
 	exeAbs := filepath.ToSlash(exe)
 	switch runtime.GOOS {
 	case "windows":
-		// Git for Windows runs hooks with its sh.exe: it uses double quotes to
-		// tolerate spaces in the path (e.g. "C:/Program Files").
-		return "#!/bin/sh\n\"" + exeAbs + "\" check --staged\n"
+		// Git for Windows runs hooks with its sh.exe and accepts slash paths.
+		return shellQuote(exeAbs) + " check --staged\n"
 	default:
-		// Linux/macOS: standard sh with the binary's absolute path.
-		return "#!/bin/sh\n\"" + exeAbs + "\" check --staged\n"
+		return shellQuote(exeAbs) + " check --staged\n"
 	}
 }
 
