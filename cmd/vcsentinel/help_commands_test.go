@@ -17,13 +17,13 @@ import (
 var expectedHelpKeys = []string{
 	"version", "help", "init", "uninit", "check",
 	"slice", "slice plan", "slice apply",
-	"review", "gate", "lint", "rebase", "status", "metrics", "doctor", "explain",
+	"review", "refute", "accept", "reopen", "gate", "lint", "rebase", "status", "metrics", "doctor", "explain",
 	"consent-diff",
 	"pr", "pr create", "pr review",
 	"install", "upgrade", "uninstall",
 	"runs", "runs start", "runs status", "runs logs", "runs respond",
 	"runs abort", "runs retry", "runs recover", "runs verify", "runs prune",
-	"runs attach", "runs daemon",
+	"runs attach", "runs daemon", "tui",
 }
 
 // invocationOfKey translates a help key into the dispatcher arguments that
@@ -47,6 +47,21 @@ func capturedHandleHelp(t *testing.T, subcommand string, args []string) (string,
 func firstLineIsUsage(output string) bool {
 	first := strings.SplitN(output, "\n", 2)[0]
 	return strings.HasPrefix(first, "vcsentinel ")
+}
+
+func TestHelpRegistryMatchesRegisteredTopics(t *testing.T) {
+	expected := make(map[string]bool, len(expectedHelpKeys))
+	for _, key := range expectedHelpKeys {
+		expected[key] = true
+		if _, ok := commandHelpTexts[key]; !ok {
+			t.Errorf("registered help topic %q has no help text", key)
+		}
+	}
+	for key := range commandHelpTexts {
+		if !expected[key] {
+			t.Errorf("help text %q is not covered by the registered-topic test", key)
+		}
+	}
 }
 
 func TestHandleHelpServesEveryRegisteredCommand(t *testing.T) {
@@ -198,7 +213,7 @@ func TestHelpTextsQuoteDeclaredUsageLines(t *testing.T) {
 			t.Errorf("%s: the help does not quote the shared usage line %q:\n%s", key, usageLine, text)
 		}
 	}
-	if commandHelpTexts["runs"] != runsUsage {
-		t.Error("'runs' must integrate runsUsage, not duplicate it")
+	if !strings.Contains(commandHelpTexts["runs"], "vcsentinel runs <subcommand> [flags]") {
+		t.Error("'runs' help must keep the shared top-level usage line")
 	}
 }

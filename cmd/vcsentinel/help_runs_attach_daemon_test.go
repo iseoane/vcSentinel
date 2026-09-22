@@ -45,8 +45,11 @@ func TestHandleHelpServesDedicatedDaemon(t *testing.T) {
 		if !served {
 			t.Fatalf("runs %v: help was supposed to intercept with daemon's text", args)
 		}
-		if !strings.Contains(out, runsDaemonUsage) || !strings.Contains(out, "orphaned-runs") {
+		if !strings.Contains(out, runsDaemonUsage) || !strings.Contains(out, "unfinished tasks whose owner disappeared") {
 			t.Errorf("runs %v: the output is not daemon's dedicated help:\n%s", args, out)
+		}
+		if strings.Contains(out, "orphaned-runs") {
+			t.Errorf("runs %v: the output exposes an internal orphaned-runs label:\n%s", args, out)
 		}
 		if strings.Contains(out, "vcsentinel runs <subcommand>") || out == runsUsage {
 			t.Errorf("runs %v: served runs' generic help instead of daemon's:\n%s", args, out)

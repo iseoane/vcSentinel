@@ -108,6 +108,15 @@ func TestInitInstallsHookInCommonDirWithMarkedRule(t *testing.T) {
 		}
 	}
 
+	skillPath := filepath.Join(root, ".agents", "skills", "vcsentinel", "SKILL.md")
+	skillBefore, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("init did not create the vcSentinel skill: %v", err)
+	}
+	if string(skillBefore) != vcsentinelSkillContent {
+		t.Errorf("init installed unexpected skill content:\n%s\nexpected:\n%s", skillBefore, vcsentinelSkillContent)
+	}
+
 	if !setup.IsInitialized(root) {
 		t.Error("init did not leave the per-project configuration (.vcsentinel/vcsentinel.yml)")
 	}
@@ -120,6 +129,10 @@ func TestInitInstallsHookInCommonDirWithMarkedRule(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		skillBefore, err := os.ReadFile(skillPath)
+		if err != nil {
+			t.Fatal(err)
+		}
 		runInit(root)
 		hookAfter, err := os.ReadFile(hookPath)
 		if err != nil {
@@ -127,6 +140,13 @@ func TestInitInstallsHookInCommonDirWithMarkedRule(t *testing.T) {
 		}
 		if string(hookBefore) != string(hookAfter) {
 			t.Error("a second init rewrote the hook")
+		}
+		skillAfter, err := os.ReadFile(skillPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(skillBefore) != string(skillAfter) {
+			t.Error("a second init rewrote the agent skill")
 		}
 		agents, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
 		if err != nil {
@@ -139,6 +159,41 @@ func TestInitInstallsHookInCommonDirWithMarkedRule(t *testing.T) {
 			t.Errorf("repeated init registered %d repositories, want 1", count)
 		}
 	})
+}
+
+func TestInitPreservesForeignAgentSkill(t *testing.T) {
+	registryPath := isolateRepositoryRegistry(t)
+	root := prepareInitRepository(t)
+	skillPath := filepath.Join(root, ".agents", "skills", "vcsentinel", "SKILL.md")
+	foreign := "---\nname: another-skill\n---\n\n# Keep this skill\n"
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte(foreign), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runInit(root)
+
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("init removed the foreign skill: %v", err)
+	}
+	if string(data) != foreign {
+		t.Errorf("init overwrote the foreign skill: %q", data)
+	}
+
+	runUninit(root)
+	data, err = os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("uninit removed the foreign skill: %v", err)
+	}
+	if string(data) != foreign {
+		t.Errorf("uninit modified the foreign skill: %q", data)
+	}
+	if count := repositoryCount(t, registryPath); count != 0 {
+		t.Errorf("uninit left %d repositories registered", count)
+	}
 }
 
 // TestUninitRevertsHookConfigAndRules proves uninit reverses exactly what init
@@ -163,6 +218,10 @@ func TestUninitRevertsHookConfigAndRules(t *testing.T) {
 	if _, err := os.Stat(hookPath); err != nil {
 		t.Fatalf("the hook was not installed after init: %v", err)
 	}
+	skillPath := filepath.Join(root, ".agents", "skills", "vcsentinel", "SKILL.md")
+	if _, err := os.Stat(skillPath); err != nil {
+		t.Fatalf("the vcSentinel skill was not installed after init: %v", err)
+	}
 
 	runUninit(root)
 
@@ -171,6 +230,9 @@ func TestUninitRevertsHookConfigAndRules(t *testing.T) {
 	}
 	if setup.IsInitialized(root) {
 		t.Error("uninit did not remove the per-project configuration")
+	}
+	if _, err := os.Stat(skillPath); !os.IsNotExist(err) {
+		t.Errorf("uninit did not remove the vcSentinel skill: %v", err)
 	}
 	if count := repositoryCount(t, registryPath); count != 0 {
 		t.Errorf("uninit left %d repositories registered", count)
@@ -200,8 +262,13 @@ func TestUninitPreservesForeignHook(t *testing.T) {
 		t.Fatalf("could not resolve the common-dir: %v", err)
 	}
 	hookPath := filepath.Join(commonDir, "hooks", "pre-commit")
+	skillPath := filepath.Join(root, ".agents", "skills", "vcsentinel", "SKILL.md")
 	foreign := "#!/bin/sh\necho other-tool\n"
 	if err := os.WriteFile(hookPath, []byte(foreign), 0755); err != nil {
+		t.Fatal(err)
+	}
+	modifiedSkill := vcsentinelSkillContent + "\nLocal repository instructions.\n"
+	if err := os.WriteFile(skillPath, []byte(modifiedSkill), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -213,6 +280,13 @@ func TestUninitPreservesForeignHook(t *testing.T) {
 	}
 	if string(data) != foreign {
 		t.Errorf("uninit modified the foreign hook: %q", data)
+	}
+	skillData, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("uninit removed a modified skill: %v", err)
+	}
+	if string(skillData) != modifiedSkill {
+		t.Errorf("uninit modified the local skill: %q", skillData)
 	}
 	if count := repositoryCount(t, registryPath); count != 0 {
 		t.Errorf("foreign hook prevented registry removal: %d repositories remain", count)

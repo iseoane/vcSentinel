@@ -59,6 +59,78 @@ const volumeRulesBody = "## CRITICAL VOLUME RULE (THE GUARDIAN)\n- Before making
 // CLAUDE.md and .claudecode.md, wrapped in markerBegin/markerEnd.
 const volumeRules = "\n" + markerBegin + "\n" + volumeRulesBody + markerEnd + "\n"
 
+// vcsentinelSkillContent is the canonical repository-local skill installed by
+// init. Ownership is determined by an exact byte-for-byte content match so
+// uninit never removes a foreign or locally modified skill.
+const vcsentinelSkillContent = `---
+name: vcsentinel
+description: "Trigger: vcSentinel, worktree volume, staged commits, review, gate, pull request, durable runs. Guide repository changes without bypassing human decisions."
+license: Apache-2.0
+metadata:
+  author: "iseoane"
+  version: "1.0"
+---
+
+<!-- vcsentinel:managed-skill -->
+
+## Activation Contract
+
+Load for repository changes governed by vcSentinel, large-change planning,
+commit review, lifecycle validation, pull requests, or durable runs.
+
+## Hard Rules
+
+- Before making changes or proposing a plan, run vcsentinel check. It measures
+  the whole worktree and is advisory, including when the state is CRITICAL.
+- The pre-commit hook runs vcsentinel check --staged. More than 400 authored
+  lines in the staged candidate are rejected.
+- Do not commit, publish, answer decisions, bypass a gate, invent a verdict,
+  or clear findings on the human's behalf.
+
+## Decision Gates
+
+| Situation | Action |
+| --- | --- |
+| slice plan reports pending_decisions or exits 3 | Show decisions verbatim; wait for the human's bypass or abort answer. |
+| review | review audits commits and records findings and verdicts; never silently clear a finding. |
+| gate | gate runs deterministic validation; it does not replace semantic review. |
+| pr review / pr create | pr review records branch evidence; pr create publishes only after requirements and human approval. |
+| runs | runs controls and observes durable execution; status, logs, verification, and delivery remain human-controlled. |
+
+## Execution Steps
+
+1. Run vcsentinel check before changing files or proposing a plan.
+2. Create a plan without committing:
+
+~~~sh
+vcsentinel slice plan --json > plan.json
+~~~
+
+3. If decisions exist, show them verbatim and wait. Write only the human's
+   literal bypass or abort answers to answers.json. Otherwise write
+   {"plan_id":"<plan_id>","answers":{}} to answers.json.
+4. Apply the answered plan:
+
+~~~sh
+vcsentinel slice apply --plan plan.json --answers answers.json
+~~~
+
+5. Follow help and exit codes; keep review, gate, pull-request, and run
+   evidence visible. Never invent authority or bypass human control.
+
+## Output Contract
+
+Return commands and observed results, decisions and human answers,
+review/gate/pull-request/run evidence, blockers, and what was not run. Never
+claim approval, publication, or a semantic verdict without authoritative
+evidence.
+
+## References
+
+- ../../../AGENTS.md — repository volume, slicing, and lifecycle rules.
+- ../../../docs/design/runs-cli.md — durable-run commands and exit codes.
+`
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -205,9 +277,11 @@ func requireInitialized(currentWorktree string) {
 	}
 }
 
+const topLevelUsage = "Usage: vcsentinel [version | help | check | slice | review | refute | accept | reopen | gate | lint | explain | pr | runs | tui | consent-diff | rebase | status | metrics | doctor | init | uninit | install | upgrade | uninstall]"
+
 func printUsage() {
 	fmt.Println("🤖 vcSentinel: Local Code Guardian")
-	fmt.Println("Usage: vcsentinel [version | help | init | uninit | check | slice | review | refute | accept | reopen | gate | lint | rebase | status | metrics | explain | pr | runs | tui | consent-diff | install | upgrade | uninstall]")
+	fmt.Println(topLevelUsage)
 }
 
 // printHelp prints the subcommand help built by buildHelp.
@@ -221,44 +295,39 @@ func printHelp() {
 func buildHelp() string {
 	var b strings.Builder
 	b.WriteString("🤖 vcSentinel: Local Code Guardian\n")
-	b.WriteString("Usage: vcsentinel [version | help | init | uninit | check | slice | review |\n")
-	b.WriteString("             refute | accept | reopen | gate | lint | rebase | status |\n")
-	b.WriteString("             metrics | explain | pr | runs | tui | consent-diff |\n")
-	b.WriteString("             install | upgrade | uninstall]\n\n")
+	b.WriteString("Usage: vcsentinel [version | help | check | slice | review |\n")
+	b.WriteString("             refute | accept | reopen | gate | lint | explain | pr |\n")
+	b.WriteString("             runs | tui | consent-diff | rebase | status | metrics |\n")
+	b.WriteString("             doctor | init | uninit | install | upgrade | uninstall]\n\n")
 	b.WriteString("Subcommands:\n")
-	printHelpItem(&b, "version", "Shows the installed version.")
-	printHelpItem(&b, "help", "Shows this help.")
-	printHelpItem(&b, "init", "Injects the volume rules into your agents, creates the per-project config, and installs the repository pre-commit hook. Always runs at the repository root (redirects automatically from a subdirectory).")
-	printHelpItem(&b, "uninit", "Reverts 'init' in this repository: removes the volume rules, deletes the per-project config, and removes the pre-commit hook (only if it is still the one vcSentinel installed).")
-	printHelpItem(&b, "check", "Audits the active worktree volume. Use --staged for the pending commit candidate; --json emits a machine-readable report.")
-	printHelpItem(&b, "slice", "Splits the pending modifications into commits of at most 400 lines.")
-	printHelpItem(&b, "", "slice plan [--json] proposes without committing (exit 3 when decisions are pending).")
-	printHelpItem(&b, "", "slice apply --plan X --answers Y executes an already approved plan.")
-	printHelpItem(&b, "review", "Audits a commit (default HEAD) against its dimension set and stores the record.")
-	printHelpItem(&b, "", "Flags: <sha|HEAD~n> --dims a,b --all --chain --gate --profile X --answer \"...\" --timeout N.")
-	printHelpItem(&b, "refute", "Record an evidence-bound human refutation of one reviewed finding (clears only its block).")
-	printHelpItem(&b, "", "Usage: refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M.")
-	printHelpItem(&b, "accept", "Record a human acceptance of one reviewed finding (documents judgement, never clears the block).")
-	printHelpItem(&b, "", "Usage: accept --sha SHA --fingerprint FP --reason TEXT.")
-	printHelpItem(&b, "reopen", "Record an evidence-bound human reopen of one cleared finding (blocks again).")
-	printHelpItem(&b, "", "Usage: reopen --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M.")
-	printHelpItem(&b, "lint", "Runs the lint_commands from the configuration.")
-	printHelpItem(&b, "rebase", "Updates the branch with fetch + rebase against its upstream (asks for confirmation).")
-	printHelpItem(&b, "status", "Guardian summary: volume, review records, and recent events.")
-	printHelpItem(&b, "", "With --json it emits JSON; with --prune it deletes orphan records.")
-	printHelpItem(&b, "metrics", "Print deterministic local aggregates from the durable store; --json emits machine-readable output with null for unknown measurements.")
-	printHelpItem(&b, "doctor", "Preflight the review environment: agents, search binary, codegraph gates, hook. Advisory, exits 0. Flag: --check-updates.")
-	printHelpItem(&b, "explain", "Explains the profile, detectors, risk, and cohesion of a range. Usage: explain [base..head] [--json].")
-	printHelpItem(&b, "pr", "Pull-request operations: pr review authors and persists a local branch judgement; pr create publishes through gh. The legacy passthrough was removed.")
-	printHelpItem(&b, "", "pr review analyzes the branch, then authors and saves its local judgement and evidence without publishing.")
+	printHelpItem(&b, "version", "Shows the installed vcSentinel version.")
+	printHelpItem(&b, "help", "Shows this command list or detailed help for one command.")
+	printHelpItem(&b, "check", "Measures added authored code; --staged checks the pending commit against the 400-line review limit.")
+	printHelpItem(&b, "slice", "Groups pending changes into reviewable commits of at most 400 authored lines.")
+	printHelpItem(&b, "", "slice plan [--json] [--intent TEXT] proposes selections without committing (exit 3 when a user decision is needed).")
+	printHelpItem(&b, "", "slice apply --plan X --answers Y applies a plan only after every required decision is answered.")
+	printHelpItem(&b, "review", "Reviews one or more commits, records the result, and can enforce a blocking result with --gate.")
+	printHelpItem(&b, "refute", "Records evidence that one reviewed finding is not valid; it clears only that finding's block.")
+	printHelpItem(&b, "accept", "Records that a person accepts one reviewed finding; acceptance does not clear its block.")
+	printHelpItem(&b, "reopen", "Records that a previously cleared finding applies again and blocks the review.")
+	printHelpItem(&b, "gate", "Runs the configured checks for a pre-commit, pre-push, or pull-request check.")
+	printHelpItem(&b, "lint", "Runs the lint commands configured for this repository.")
+	printHelpItem(&b, "explain", "Describes the size, changed areas, risks, and suggested split for a commit range.")
+	printHelpItem(&b, "pr", "Saves a branch review with pr review, then publishes that saved result with pr create.")
 	printHelpItem(&b, "", "pr review flags: --base X --parent X --overview --json.")
-	printHelpItem(&b, "", "        create --base X --parent X --chain-pr --audit-pending --force --reason \"...\".")
-	printHelpItem(&b, "runs", "Operator commands over durable runs: start, status, logs, respond, abort, retry, recover, verify. See docs/design/runs-cli.md for flags, JSON shapes, and exit codes.")
-	printHelpItem(&b, "tui", "Open the full-screen control center (starts/stops this repository's daemon for the session).")
-	printHelpItem(&b, "consent-diff", "Manages the local per-user and per-repository grant: grant, revoke, or status.")
-	printHelpItem(&b, "install", "Downloads and installs the latest published release from GitHub.")
-	printHelpItem(&b, "upgrade", "Replaces the current binary with the latest published release.")
-	printHelpItem(&b, "uninstall", "Removes the installed binary and the global configuration.")
+	printHelpItem(&b, "", "pr create flags: --base X --parent X --chain-pr --force --reason \"...\".")
+	printHelpItem(&b, "runs", "Starts and manages tracked agent tasks: start, status, logs, respond, abort, retry, recover, verify, attach, daemon, and prune.")
+	printHelpItem(&b, "tui", "Opens the interactive dashboard for this repository and its tracked tasks.")
+	printHelpItem(&b, "consent-diff", "Grants, revokes, or shows permission to share small diffs with configured agents.")
+	printHelpItem(&b, "rebase", "Fetches the upstream branch and rebases the current branch after confirmation.")
+	printHelpItem(&b, "status", "Shows repository volume, saved review records, and recent command activity.")
+	printHelpItem(&b, "metrics", "Shows local review, remediation, and execution measurements; unknown values stay unknown.")
+	printHelpItem(&b, "doctor", "Checks whether the local tools and configured agents needed for review are ready.")
+	printHelpItem(&b, "init", "Sets up vcSentinel in a Git repository: project settings, guidance, a pre-commit check, and the repository-local agent skill.")
+	printHelpItem(&b, "uninit", "Removes vcSentinel's repository setup while preserving foreign or modified files it does not own.")
+	printHelpItem(&b, "install", "Installs the latest release globally for your user account; initialize each repository separately with init.")
+	printHelpItem(&b, "upgrade", "Updates the globally installed vcSentinel program without changing repository setup.")
+	printHelpItem(&b, "uninstall", "Removes the global vcSentinel program and settings; per-repository setup remains until uninit is run there.")
 	b.WriteString("\nFlags:\n")
 	b.WriteString("  --version, -v   Shows the installed version (equivalent to 'version').\n")
 	b.WriteString("  --help, -h      Shows this help (equivalent to 'help').\n")
@@ -342,6 +411,15 @@ func runInit(path string) {
 		}
 	}
 
+	skillSucceeded := true
+	skillPath := filepath.Join(path, ".agents", "skills", "vcsentinel", "SKILL.md")
+	if written, err := installVCSentinelSkill(skillPath); err != nil {
+		skillSucceeded = false
+		fmt.Printf("⚠️ Could not install the vcSentinel agent skill: %v\n", err)
+	} else if written {
+		fmt.Println("📝 vcSentinel agent skill installed at: .agents/skills/vcsentinel/SKILL.md")
+	}
+
 	if _, err := exec.LookPath("git"); err != nil {
 		fmt.Println("❌ git is not on the PATH. Install it before running 'vcsentinel init'.")
 		os.Exit(1)
@@ -378,14 +456,15 @@ func runInit(path string) {
 	}
 
 	fmt.Println("⚓ Git Hook 'pre-commit' installed in this repository. Environment successfully secured.")
-	if rulesSucceeded && configurationSucceeded {
+	if rulesSucceeded && skillSucceeded && configurationSucceeded {
 		updateRepositoryRegistry(path, (*registry.Registry).Register)
 	}
 }
 
 // runUninit reverts in this repository exactly what 'init' did: it removes
-// the rules block from AGENTS.md/CLAUDE.md/.claudecode.md, deletes the
-// per-project config, and removes the 'pre-commit' hook — but only if its
+// the rules block from AGENTS.md/CLAUDE.md/.claudecode.md, removes the
+// repository-local agent skill, deletes the per-project config, and removes
+// the 'pre-commit' hook — but only if its
 // content matches byte for byte what generateHookScript would produce today;
 // if it differs (another tool replaced it, or it comes from elsewhere), it
 // leaves it intact and warns instead of deleting something vcSentinel did
@@ -416,6 +495,14 @@ func runUninit(path string) {
 		}
 	}
 
+	skillPath := filepath.Join(path, ".agents", "skills", "vcsentinel", "SKILL.md")
+	if removed, err := removeVCSentinelSkillIfOwned(skillPath); err != nil {
+		cleanupSucceeded = false
+		fmt.Printf("⚠️ Could not clean the vcSentinel agent skill: %v\n", err)
+	} else if removed {
+		fmt.Println("📝 vcSentinel agent skill removed: .agents/skills/vcsentinel/SKILL.md")
+	}
+
 	configPath := filepath.Join(path, ".vcsentinel", "vcsentinel.yml")
 	if err := os.Remove(configPath); err != nil {
 		if !os.IsNotExist(err) {
@@ -441,6 +528,69 @@ func runUninit(path string) {
 	if cleanupSucceeded {
 		updateRepositoryRegistry(path, (*registry.Registry).Remove)
 	}
+}
+
+// installVCSentinelSkill creates the canonical agent skill when it is absent.
+// Existing content is never overwritten, even if it differs from the
+// canonical skill; exact content ownership is required for uninit cleanup.
+func installVCSentinelSkill(path string) (bool, error) {
+	current, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if string(current) == vcsentinelSkillContent {
+			return false, nil
+		}
+		fmt.Printf("⚠️ An existing agent skill at %s is not the vcSentinel skill: leaving it untouched.\n", path)
+		return false, nil
+	case !os.IsNotExist(err):
+		return false, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return false, err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if os.IsExist(err) {
+		current, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return false, readErr
+		}
+		if string(current) != vcsentinelSkillContent {
+			fmt.Printf("⚠️ An existing agent skill at %s is not the vcSentinel skill: leaving it untouched.\n", path)
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := file.WriteString(vcsentinelSkillContent); err != nil {
+		_ = file.Close()
+		return false, err
+	}
+	if err := file.Close(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// removeVCSentinelSkillIfOwned removes the skill only when its content exactly
+// matches the canonical content installed by vcSentinel. A missing or foreign
+// skill is not an error and is left untouched.
+func removeVCSentinelSkillIfOwned(path string) (bool, error) {
+	current, err := os.ReadFile(path)
+	switch {
+	case os.IsNotExist(err):
+		return false, nil
+	case err != nil:
+		return false, err
+	case string(current) != vcsentinelSkillContent:
+		fmt.Printf("⚠️ The current agent skill at %s does not match the one installed by vcSentinel: leaving it untouched.\n", path)
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // injectRulesIntoFile appends the managed rule when it is absent and

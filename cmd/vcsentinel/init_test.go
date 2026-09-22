@@ -99,3 +99,184 @@ func TestRemoveRulesRepairsDuplicates(t *testing.T) {
 		t.Errorf("uninit deleted foreign content: %q", data)
 	}
 }
+
+func TestInstallVCSentinelSkillCreatesCanonicalFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "skills", "vcsentinel", "SKILL.md")
+
+	written, err := installVCSentinelSkill(path)
+	if err != nil {
+		t.Fatalf("installVCSentinelSkill returned an error: %v", err)
+	}
+	if !written {
+		t.Fatal("installVCSentinelSkill should create a missing skill")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the skill was not created: %v", err)
+	}
+	if string(data) != vcsentinelSkillContent {
+		t.Errorf("unexpected skill content:\n%s\nexpected:\n%s", data, vcsentinelSkillContent)
+	}
+}
+
+func TestInstallVCSentinelSkillIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "skills", "vcsentinel", "SKILL.md")
+	if _, err := installVCSentinelSkill(path); err != nil {
+		t.Fatalf("first install returned an error: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	written, err := installVCSentinelSkill(path)
+	if err != nil {
+		t.Fatalf("second install returned an error: %v", err)
+	}
+	if written {
+		t.Error("second install rewrote the canonical skill")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Error("second install changed the canonical skill")
+	}
+}
+
+func TestVCSentinelSkillContentCoversGovernance(t *testing.T) {
+	for _, fragment := range []string{
+		"---\nname: vcsentinel",
+		"<!-- vcsentinel:managed-skill -->",
+		"vcsentinel check",
+		"vcsentinel check --staged",
+		"More than 400 authored",
+		"vcsentinel slice plan --json",
+		"pending_decisions",
+		`{"plan_id":"<plan_id>","answers":{}}`,
+		"vcsentinel slice apply --plan plan.json --answers answers.json",
+		"review audits commits",
+		"gate runs deterministic validation",
+		"pr review records",
+		"runs controls and observes",
+		"human-controlled",
+	} {
+		if !strings.Contains(vcsentinelSkillContent, fragment) {
+			t.Errorf("canonical skill does not contain %q", fragment)
+		}
+	}
+
+	sections := []string{
+		"## Activation Contract",
+		"## Hard Rules",
+		"## Decision Gates",
+		"## Execution Steps",
+		"## Output Contract",
+		"## References",
+	}
+	previous := -1
+	for _, section := range sections {
+		position := strings.Index(vcsentinelSkillContent, section)
+		if position == -1 {
+			t.Errorf("canonical skill does not contain %q", section)
+			continue
+		}
+		if position <= previous {
+			t.Errorf("canonical skill places %q out of order", section)
+		}
+		previous = position
+	}
+	if !strings.HasSuffix(vcsentinelSkillContent, "\n") {
+		t.Error("canonical skill should end with a newline")
+	}
+}
+
+func TestInstallVCSentinelSkillPreservesForeignOrModifiedContent(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content string
+	}{
+		{name: "foreign", content: "# A different skill\n"},
+		{name: "modified", content: vcsentinelSkillContent + "\nLocal instructions.\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".agents", "skills", "vcsentinel", "SKILL.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(test.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			written, err := installVCSentinelSkill(path)
+			if err != nil {
+				t.Fatalf("installVCSentinelSkill returned an error: %v", err)
+			}
+			if written {
+				t.Error("install overwrote a pre-existing skill")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != test.content {
+				t.Errorf("install changed pre-existing content: %q", data)
+			}
+		})
+	}
+}
+
+func TestRemoveVCSentinelSkillIfOwnedRemovesCanonicalFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "skills", "vcsentinel", "SKILL.md")
+	if _, err := installVCSentinelSkill(path); err != nil {
+		t.Fatalf("install returned an error: %v", err)
+	}
+
+	removed, err := removeVCSentinelSkillIfOwned(path)
+	if err != nil {
+		t.Fatalf("removeVCSentinelSkillIfOwned returned an error: %v", err)
+	}
+	if !removed {
+		t.Fatal("removeVCSentinelSkillIfOwned should remove the canonical skill")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("canonical skill still exists after removal: %v", err)
+	}
+}
+
+func TestRemoveVCSentinelSkillIfOwnedPreservesForeignOrModifiedContent(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content string
+	}{
+		{name: "foreign", content: "# A different skill\n"},
+		{name: "modified", content: vcsentinelSkillContent + "\nLocal instructions.\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".agents", "skills", "vcsentinel", "SKILL.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(test.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			removed, err := removeVCSentinelSkillIfOwned(path)
+			if err != nil {
+				t.Fatalf("removeVCSentinelSkillIfOwned returned an error: %v", err)
+			}
+			if removed {
+				t.Error("remove deleted a non-owned skill")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != test.content {
+				t.Errorf("remove changed pre-existing content: %q", data)
+			}
+		})
+	}
+}

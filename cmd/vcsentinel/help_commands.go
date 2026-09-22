@@ -8,8 +8,8 @@ package main
 // additive: it calls handleHelp once before executing anything.
 //
 // This file owns the registry structure and the interception logic. The long
-// English help texts live in ayuda_textos.go; only trivial single-command
-// entries stay inline below.
+// English help texts live in help_texts.go; only short single-command entries
+// stay inline below.
 
 import (
 	"fmt"
@@ -20,10 +20,10 @@ import (
 
 // commandHelpTexts is the single source of per-command help: 'vcsentinel help
 // <command>' and '<command> --help' resolve through the same map. Long texts
-// reference their named constants from ayuda_textos.go so the registry stays
+// reference their named constants from help_texts.go so the registry stays
 // scannable.
 var commandHelpTexts = map[string]string{
-	"version": `Purpose: print the installed vcSentinel version.
+	"version": `Purpose: show the installed vcSentinel version.
 
 Usage:
   vcsentinel version
@@ -34,7 +34,7 @@ Flags:
 Example:
   vcsentinel version
 `,
-	"help": `Purpose: show the top-level command list or the dedicated help of one command.
+	"help": `Purpose: show the command list or detailed help for one command.
 
 Usage:
   vcsentinel help [command]
@@ -45,7 +45,14 @@ Flags:
 Example:
   vcsentinel help gate
 `,
-	"init": `Purpose: inject the volume rule into agent instruction files, create the project configuration (.vcsentinel/vcsentinel.yml), and install the repository pre-commit hook. Always runs at the worktree root (redirects automatically from a subdirectory).
+	"init": `Purpose: set up vcSentinel in a Git repository.
+
+Init creates .vcsentinel/vcsentinel.yml, adds the managed volume guidance to
+agent instruction files, installs the repository pre-commit check, and creates
+the repository-local skill at .agents/skills/vcsentinel/SKILL.md. If you run it
+below the repository root, it redirects to that root. Content outside
+vcSentinel's managed sections is preserved, and an existing foreign or modified
+repository-local skill is left untouched.
 
 Usage:
   vcsentinel init
@@ -56,7 +63,13 @@ Flags:
 Example:
   vcsentinel init
 `,
-	"uninit": `Purpose: revert init for this repository: remove the injected volume rule, delete the project configuration, and uninstall the pre-commit hook (only if it is byte-for-byte the one vcSentinel installed).
+	"uninit": `Purpose: remove vcSentinel's setup from this Git repository.
+
+Uninit removes the managed guidance, project configuration, repository-local
+skill at .agents/skills/vcsentinel/SKILL.md, and pre-commit check installed by
+init. It removes the skill and hook only when their contents prove that
+vcSentinel owns them. Foreign or modified instruction files, skills, and hooks
+are preserved; unrelated repository files are never removed.
 
 Usage:
   vcsentinel uninit
@@ -67,7 +80,8 @@ Flags:
 Example:
   vcsentinel uninit
 `,
-	"lint": `Purpose: run the configured lint_commands from vcsentinel.yml; exits 1 if any command fails.
+	"lint": `Purpose: run the lint commands configured in vcsentinel.yml. The command
+exits 1 when any configured command fails.
 
 Usage:
   vcsentinel lint
@@ -78,7 +92,9 @@ Flags:
 Example:
   vcsentinel lint
 `,
-	"rebase": `Purpose: fetch and rebase the current branch against its upstream after confirmation.
+	"rebase": `Purpose: use the configured upstream to rebase the current branch after
+you confirm. If no upstream exists, vcSentinel falls back to local main or
+master. The repository must have no pending changes.
 
 Usage:
   vcsentinel rebase
@@ -89,7 +105,12 @@ Flags:
 Example:
   vcsentinel rebase
 `,
-	"install": `Purpose: download and install the latest published release from GitHub.
+	"install": `Purpose: download and install the latest published vcSentinel release
+for your user account.
+
+This is a global installation. It installs the program and global settings but
+does not initialize any repository. Run 'vcsentinel init' separately in each
+repository that should use vcSentinel.
 
 Usage:
   vcsentinel install
@@ -100,7 +121,11 @@ Flags:
 Example:
   vcsentinel install
 `,
-	"upgrade": `Purpose: replace the installed binary with the latest published release from GitHub.
+	"upgrade": `Purpose: replace the globally installed vcSentinel program with the
+latest published release.
+
+Upgrade changes the user-level installation only. It does not change any
+repository's project settings, skill, guidance, or hook.
 
 Usage:
   vcsentinel upgrade
@@ -111,7 +136,12 @@ Flags:
 Example:
   vcsentinel upgrade
 `,
-	"uninstall": `Purpose: remove the installed binary and the global configuration.
+	"uninstall": `Purpose: remove the globally installed vcSentinel program and its user-level
+settings.
+
+Uninstall does not remove per-repository settings, the repository-local skill,
+managed guidance, or hooks. Run 'vcsentinel uninit' in each repository if that
+setup should also be removed; foreign or modified files are preserved.
 
 Usage:
   vcsentinel uninstall
@@ -141,10 +171,7 @@ Example:
 	"pr create":    prCreateHelp,
 	"pr review":    prReviewHelp,
 
-	// 'vcsentinel runs' integrates the centralized runsUsage text instead of
-	// duplicating it: subcommand matrix, exit codes, and docs pointer live
-	// there already.
-	"runs": runsUsage,
+	"runs": runsHelp,
 
 	"runs start":   runsStartHelp,
 	"runs status":  runsStatusHelp,
@@ -179,8 +206,8 @@ func containsHelpFlag(args []string) bool {
 // resolveCommandPath maps subcommand invocations ("slice plan", "pr review",
 // "runs logs") to their dedicated help key and returns the argument list that
 // belongs to that subcommand. Unknown first arguments keep the parent key, so
-// e.g. 'vcsentinel pr --help' serves the pr text instead of falling into the gh
-// passthrough.
+// e.g. 'vcsentinel pr --help' serves the pr text instead of falling into the
+// publishing path.
 func resolveCommandPath(subcommand string, args []string) (string, []string) {
 	if len(args) > 0 {
 		switch subcommand {

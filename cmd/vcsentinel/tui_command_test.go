@@ -666,7 +666,7 @@ func TestHelpDocumentsTuiCommand(t *testing.T) {
 	if !strings.Contains(help, "  tui ") {
 		t.Errorf("the top-level help does not list the tui command:\n%s", help)
 	}
-	if !strings.Contains(help, "Open the full-screen control center") {
+	if !strings.Contains(help, "Opens the interactive dashboard") {
 		t.Error("the tui help row lacks its approved description")
 	}
 
@@ -674,8 +674,12 @@ func TestHelpDocumentsTuiCommand(t *testing.T) {
 	if !writeCommandHelp(&dedicated, "tui") {
 		t.Fatal("'vcsentinel help tui' resolves to nothing: no dedicated text registered")
 	}
-	if text := dedicated.String(); !strings.Contains(text, "Purpose:") || !strings.Contains(text, "vcsentinel tui") {
-		t.Errorf("dedicated tui help is malformed:\n%s", text)
+	tuiText := dedicated.String()
+	if !strings.Contains(tuiText, "Purpose:") || !strings.Contains(tuiText, "vcsentinel tui") {
+		t.Errorf("dedicated tui help is malformed:\n%s", tuiText)
+	}
+	if !strings.Contains(tuiText, "interactive dashboard") || strings.Contains(tuiText, "control center") {
+		t.Errorf("dedicated tui help should use plain dashboard language:\n%s", tuiText)
 	}
 
 	var served, errs bytes.Buffer

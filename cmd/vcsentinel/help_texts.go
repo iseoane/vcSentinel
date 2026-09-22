@@ -1,9 +1,8 @@
 package main
 
 // Long English help texts referenced by the commandHelpTexts registry in
-// ayuda_comandos.go. Keeping them here lets the registry stay a compact
-// key-to-constant map. The bytes are moved verbatim from the former inline
-// literals, so every help output stays byte-for-byte identical.
+// help_commands.go. Keeping them here lets the registry stay a compact
+// key-to-constant map.
 
 import "fmt"
 
@@ -19,59 +18,59 @@ const (
 
 	runsStartUsage         = "Usage: vcsentinel runs start --prompt <text> [--policy-id <id>]"
 	runsStatusUsage        = "Usage: vcsentinel runs status [--run <id>] [--json]"
-	runsLogsUsage          = "Usage: vcsentinel runs logs --run <id> [--after <cursor>] [--limit N]"
+	runsLogsUsage          = "Usage: vcsentinel runs logs --run <id> [--after <activity-number>] [--limit N]"
 	runsRespondUsage       = "Usage: vcsentinel runs respond --run <id> --text <answer>"
 	runsAbortUsage         = "Usage: vcsentinel runs abort --run <id>"
 	runsRetryUsage         = "Usage: vcsentinel runs retry --run <id> [--expected-revision N]"
 	runsRecoverRepairUsage = "Usage: vcsentinel runs recover --repair <id>"
 	runsVerifyUsage        = "Usage: vcsentinel runs verify --run <id>"
 	runsPruneUsage         = "Usage: vcsentinel runs prune --older-than <duration> [--json]"
-	runsAttachUsage        = "Usage: vcsentinel runs attach [--run <id>] [--after <cursor>] [--follow]"
+	runsAttachUsage        = "Usage: vcsentinel runs attach [--run <id>] [--after <activity-number>] [--follow]"
 	runsDaemonUsage        = "Usage: vcsentinel runs daemon start|status|stop"
 )
 
 const (
-	checkHelp = `Purpose: measure added authored code lines. Whole-worktree measurement is advisory; --staged enforces the 400-line review budget for the pending commit candidate.
+	checkHelp = `Purpose: measure added authored code in this repository. A normal check is advisory; --staged enforces the 400-line review limit for the pending commit.
 
 Usage:
   vcsentinel check [--json] [--staged]
 
 Flags:
   --json     Emit the machine-readable report instead of text.
-  --staged   Measure only the staged commit candidate; rejects over 400 authored lines with exit 1.
+  --staged   Measure only staged changes; exit 1 when authored code exceeds 400 lines.
 
 Examples:
   vcsentinel check
   vcsentinel check --staged
 `
-	sliceHelp = `Purpose: split pending modifications into reviewable commits of at most 400 authored lines.
+	sliceHelp = `Purpose: group pending changes into reviewable commits of at most 400 authored lines.
 
 Usage:
   vcsentinel slice                Interactive flow (requires stdin).
-  vcsentinel slice plan [--json]  Propose selections without committing; exit 3 when user decisions are pending.
+  vcsentinel slice plan [--json] [--intent TEXT]
+                                Propose selections without committing; exit 3 when a user decision is pending.
   vcsentinel slice apply --plan <plan.json> --answers <answers.json>
-                                Apply an approved plan; commits only when every decision has an explicit answer.
+                                Apply an approved plan; commit only after every required decision is answered.
 
-Flags:
-  --json     Emit the plan as JSON (slice plan).
-  --plan     Path to the plan produced by 'slice plan' (slice apply).
-  --answers  Path to the JSON answers for every pending decision (slice apply).
+The plan/apply flow is the non-interactive alternative to the guided flow.
 
 Example:
   vcsentinel slice plan --json > plan.json
 `
-	slicePlanHelp = `Purpose: propose reviewable selections without committing anything; exit 3 when user decisions are pending.
+	slicePlanHelp = `Purpose: propose reviewable selections without committing anything. Exit 3 when a user decision is pending.
 
 Usage:
-  vcsentinel slice plan [--json]
+  vcsentinel slice plan [--json] [--intent TEXT]
 
 Flags:
-  --json  Emit the plan as machine-readable JSON.
+  --json       Emit the plan as machine-readable JSON.
+  --intent     Briefly state what the changes are for; the text helps describe
+               the proposed groupings and is optional.
 
 Example:
-  vcsentinel slice plan --json > plan.json
+  vcsentinel slice plan --intent "separate the parser fix" --json > plan.json
 `
-	sliceApplyHelp = `Purpose: execute an approved plan, committing only when every pending decision has an explicit user answer.
+	sliceApplyHelp = `Purpose: apply an approved plan. It commits only when every pending decision has an explicit user answer.
 
 Usage:
   ` + sliceApplyUsage + `
@@ -86,26 +85,26 @@ Example:
 )
 
 const (
-	reviewHelp = `Purpose: audit one or more commits by dimension and store an append-only review record.
+	reviewHelp = `Purpose: review one or more commits against the selected checks and save the result. The default target is HEAD.
 
 Usage:
   vcsentinel review [<sha>|<expr> ...] [--dims a,b] [--profile X] [--answer "..."] [--timeout N] [--all] [--chain] [--gate] [--json] [--prune]
 
 Flags:
-  --dims     Comma-separated subset of dimensions to audit (logic, style, design, tests, security, spec).
-  --profile  Review profile override.
-  --answer   Answer text recorded with the revision.
-  --timeout  Per-call agent timeout override in seconds.
-  --all      Audit every commit up to the target that has no review record yet.
-  --chain    Audit the whole range from upstream/main to the target.
-  --gate     Escalate any CRITICAL verdict to exit code 1.
+  --dims     Comma-separated checks to run (logic, style, design, tests, security, spec).
+  --profile  Use a named review profile instead of the configured default.
+  --answer   Text used to answer a question raised during the review.
+  --timeout  Per-agent time limit for this invocation, in seconds.
+  --all      Review each commit up to the target that has not been reviewed.
+  --chain    Review the branch or range through the target.
+  --gate     Exit 1 when the review has a critical finding.
   --json     Emit machine-readable output.
-  --prune    Standalone cleanup of review records for commits that no longer exist.
+  --prune    Remove saved review records for commits that no longer exist.
 
 Example:
   vcsentinel review HEAD --dims logic,tests --gate
 `
-	refuteHelp = `Purpose: record an evidence-bound human refutation of one reviewed finding.
+	refuteHelp = `Purpose: record evidence that one reviewed finding is not valid.
 
 Usage:
   vcsentinel refute --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M
@@ -117,19 +116,16 @@ Flags:
   --line-start   First evidence line, 1-based (required).
   --line-end     Last evidence line, 1-based; at most 20 lines per range (required).
 
-The evidence path is taken from the finding itself, never from the caller.
-The evidence is read from the audited Git object and must match the snapshot
-exactly; the finding's line must sit inside the range. A missing or ambiguous
-fingerprint, an unsafe path, and a corrupt dispositions log all fail closed
-without persisting anything. The answer is appended to the separate
-dispositions log: persisted review revisions are never mutated. A valid
-refutation clears only its matching finding; accepted_by_user never clears a
-block, fixed clears it, and reopened blocks again.
+The evidence file and lines come from the reviewed commit. vcSentinel checks
+them before saving your answer. An invalid or ambiguous fingerprint, an unsafe
+path, or unreadable answer history fails without saving anything. A refutation
+clears only the matching finding's block; accepting a finding does not clear it,
+and reopening a cleared finding blocks it again.
 
 Example:
   vcsentinel refute --sha abc12345 --fingerprint 1f4902c8 --reason "the committed implementation is safe" --line-start 2 --line-end 2
 `
-	acceptHelp = `Purpose: record a human acceptance of one reviewed finding.
+	acceptHelp = `Purpose: record that a person accepts the risk described by one reviewed finding.
 
 Usage:
   vcsentinel accept --sha SHA --fingerprint FP --reason TEXT
@@ -139,17 +135,15 @@ Flags:
   --fingerprint  Stable fingerprint of the finding to answer (required, exact).
   --reason       Why the risk is acknowledged (required, non-empty).
 
-Acceptance documents judgement without clearing the block: the finding keeps
-blocking under the shared rule, exactly as before. Only an unanswered finding
-(pending, confirmed, or legacy status-less) can be accepted; an already
-answered one, an unsafe path, and a corrupt dispositions log all fail closed
-without persisting anything. The answer is appended to the separate
-dispositions log: persisted review revisions are never mutated.
+Acceptance documents a decision but does not clear the finding's block. It can
+answer only a finding that has not already been answered. An invalid or
+ambiguous fingerprint, an unsafe path, or unreadable answer history fails
+without saving anything.
 
 Example:
   vcsentinel accept --sha abc12345 --fingerprint 1f4902c8 --reason "residual risk acknowledged for this release"
 `
-	reopenHelp = `Purpose: record an evidence-bound human reopen of one cleared finding.
+	reopenHelp = `Purpose: record that one previously cleared finding applies again.
 
 Usage:
   vcsentinel reopen --sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M
@@ -161,88 +155,81 @@ Flags:
   --line-start   First evidence line, 1-based (required).
   --line-end     Last evidence line, 1-based; at most 20 lines per range (required).
 
-The evidence path is taken from the finding itself, never from the caller.
-The evidence is read from the audited Git object and must match the snapshot
-exactly; the finding's line must sit inside the range. Only a cleared finding
-(refuted or fixed) can be reopened; a still-blocking finding has nothing to
-reopen. A missing or ambiguous fingerprint, an unsafe path, and a corrupt
-dispositions log all fail closed without persisting anything. The answer is
-appended to the separate dispositions log: persisted review revisions are
-never mutated. A reopened finding blocks again under the shared rule.
+The evidence file and lines come from the reviewed commit. Only a refuted or
+fixed finding can be reopened; a finding that still blocks has nothing to
+reopen. vcSentinel checks the evidence before saving your answer. Invalid or
+ambiguous input, an unsafe path, or unreadable answer history fails without
+saving anything.
 
 Example:
   vcsentinel reopen --sha abc12345 --fingerprint 1f4902c8 --reason "the guard is bypassed on this path" --line-start 2 --line-end 2
 `
-	gateHelp = `Purpose: run the deterministic validation profile and report its outcome.
+	gateHelp = `Purpose: run the configured validation checks and report whether they pass.
 
-The gate answers "does this work right now": lint, tests, build. It does not
-judge code quality and involves no agent. That is ` + "`vcsentinel review`" + `, which
-audits one commit and is the only writer of per-commit verdicts.
+The gate answers "does this change pass the repository's required checks right
+now?" It runs the selected validation profile without an agent. It does not
+review code quality; use ` + "`vcsentinel review`" + ` for that.
 
 Usage:
   vcsentinel gate --stage pre-commit|pre-push|pr [--profile X]
 
 Flags:
-  --stage    Lifecycle stage invoking the gate (required): pre-commit, pre-push, or pr.
+  --stage    Where the check is being run (required): pre-commit, pre-push, or pr.
   --profile  Validation profile from validation.profiles (default standard).
 
 Exit codes:
   0  PASS: every configured command passed.
-  1  VALIDATION_FAILED: a command reported a failure, with its own output as evidence.
-  4  INFRASTRUCTURE_ERROR: configuration, HEAD, planning, store or execution failed.
+  1  VALIDATION_FAILED: a command reported a failure, with its output as evidence.
+  4  INFRASTRUCTURE_ERROR: configuration, HEAD, planning, storage, or execution failed.
 
 Example:
   vcsentinel gate --stage pre-commit
 `
-	statusHelp = `Purpose: guardian summary: worktree volume, review records, and recent events.
+	statusHelp = `Purpose: show repository volume, saved review records, and recent command activity.
 
 Usage:
   vcsentinel status [--json] [--prune]
 
 Flags:
   --json   Emit machine-readable JSON instead of text.
-  --prune  Delete review records for commits that no longer exist, then report.
+  --prune  Remove review records for commits that no longer exist, then report.
 
 Example:
   vcsentinel status --json
 `
-	metricsHelp = `Purpose: print deterministic local aggregates from the durable store.
+	metricsHelp = `Purpose: show local measurements about reviews, fixes, and tracked agent tasks.
 
 Usage:
   vcsentinel metrics [--json]
 
 Flags:
-  --json   Emit machine-readable aggregates with stable units and null for unknown measurements.
+  --json   Emit machine-readable measurements. Unknown values remain null.
 
-The command reads only the local Git common directory. Corrupt or unreadable
-evidence is reported as an error instead of being treated as an empty store.
+The command reads local vcSentinel records only. Corrupt or unreadable records
+are reported as errors instead of being treated as an empty result.
 
 Example:
   vcsentinel metrics --json
 `
-	doctorHelp = `Purpose: preflight the local environment a review depends on, so a missing tool fails fast here instead of surfacing as a review timeout.
+	doctorHelp = `Purpose: check whether the local tools and configured agents needed for review are ready.
 
 Usage:
   vcsentinel doctor [--check-updates]
 
 Flags:
-  --check-updates   Compare the installed version against the latest published release. A network call, off by default.
+  --check-updates   Compare the installed version with the latest published release. Off by default because it uses the network.
 
-Advisory only: reports and exits 0 like check. It never gates anything and
-never installs — every warning prints the exact command to run instead.
-Binaries resolve with exec.LookPath, never a shell probe. Each configured
-agent must resolve and answer a minimal real prompt; the reviewer's search
-binary, the codegraph binary, index, and six context gates, and the
-pre-commit hook target are checked the same way. A condition whose prober did
-not run renders as UNKNOWN with no remedy — never as a failure. A probe
-failure surfaces the agent's own output; a timeout with output has an
-indeterminate cause (a timed-out probe cannot distinguish a refusal from a
-hang), and a timeout with no output names the command to run by hand.
+This is an advisory check: it reports warnings and exits 0, and it never
+installs anything or blocks a command. It checks configured agents, search and
+code-analysis tools, the local index, and the repository pre-commit check. Each
+configured agent receives a minimal real prompt. If a check cannot run, it is
+shown as UNKNOWN rather than reported as a failure. Warnings include the
+command to run when one is available.
 
 Example:
   vcsentinel doctor
 `
-	explainHelp = `Purpose: explain the change profile, detected characteristics, risk, and cohesion of a commit range.
+	explainHelp = `Purpose: describe the size, changed areas, detected characteristics, risks, and suggested split for a commit range.
 
 Usage:
   ` + explainUsageArgs + `
@@ -253,15 +240,15 @@ Flags:
 Example:
   vcsentinel explain HEAD~3..HEAD
 `
-	consentDiffHelp = `Purpose: manage the local per-user consent to expose diffs to external agents (required before slice can generate commit messages through an agent).
+	consentDiffHelp = `Purpose: manage permission to share small diffs with configured agents when vcSentinel generates commit messages.
 
 Usage:
   ` + consentDiffUsage + `
 
 Actions:
-  grant   Grant consent for this repository.
-  revoke  Revoke consent for this repository.
-  status  Show the current consent state.
+  grant   Grant permission for this repository.
+  revoke  Revoke permission for this repository.
+  status  Show the current permission state.
 
 Example:
   vcsentinel consent-diff grant
@@ -269,214 +256,266 @@ Example:
 )
 
 const (
-	prHelp = `Purpose: pull-request operations.
+	prHelp = `Purpose: prepare and publish a pull request.
 
 Usage:
-  vcsentinel pr create [...]
   vcsentinel pr review [...]
+  vcsentinel pr create [...]
 
-The legacy 'vcsentinel pr [gh arguments]' passthrough was removed: use 'vcsentinel pr create' instead.
+pr review analyzes the current branch and saves its result and evidence locally;
+it does not publish anything. pr create publishes only after it finds a
+previously saved pr review result for this branch and commit. pr create does
+not review the branch itself.
 
 Run 'vcsentinel help pr create' or 'vcsentinel help pr review' for their flags.
 `
-	prCreateHelp = `Purpose: analyze the branch, apply the blocking gate, and publish the pull request through gh with the honest verification template.
+	prCreateHelp = `Purpose: publish a pull request using a previously saved pr review result.
+
+pr create does not review the branch. It requires a pr review result saved for
+the current branch and commit, verifies the required checks, and then publishes
+the saved title and body through GitHub. If the saved review or its evidence is
+missing, it stops instead of reviewing on your behalf.
 
 Usage:
-  vcsentinel pr create [--base X] [--parent X] [--chain-pr] [--audit-pending] [--force --reason "..."]
+  vcsentinel pr create [--base X] [--parent X] [--chain-pr] [--force --reason "..."]
 
 Flags:
-  --base            Comparison branch for the analysis; context/default base for stacked layers.
-  --parent          Explicit stacked parent branch: only the own diff against it is reviewed, and the PR targets it.
-  --chain-pr        Declare this branch as a stack layer and publish it even when oversized. Without --parent, the parent branch is resolved strictly and fails closed without a reliable signal.
-  --audit-pending   Audit every branch commit without a review record instead of only reporting the gap (the net audit already covers the whole picture; this is the more expensive opt-in).
-  --force           Override a red validation verdict; requires --reason.
-  --reason          Explicit motive recorded alongside --force.
+  --base       Comparison branch and default target for the pull request.
+  --parent     Explicit parent branch for a stacked pull request; only this branch's own changes are considered.
+  --chain-pr   Mark this branch as a stack layer and allow publication when it is larger than the normal limit. Without --parent, the parent must be resolved safely.
+  --force      Override a failed validation result; requires --reason.
+  --reason     Explanation recorded with --force.
 
 Example:
   vcsentinel pr create --base main
 `
-	prReviewHelp = `Purpose: analyze the unpublished branch, author and persist its local judgement and evidence, and publish no pull request.
+	prReviewHelp = `Purpose: review the current branch and save its result and evidence without publishing a pull request.
+
+This command does not publish. It reports commits that still need individual
+review with 'vcsentinel review'.
 
 Usage:
   vcsentinel pr review [--base X] [--parent X] [--overview] [--json]
 
 Flags:
-  --base            Comparison branch (default main).
-  --parent          Explicit stacked parent branch: reviews only the own diff against it; inherited findings render separately (non-blocking).
-  --overview        Include the PR overview in the analysis.
-  --json            Emit machine-readable JSON.
+  --base       Comparison branch (default main).
+  --parent     Explicit parent branch for a stacked pull request; inherited findings are shown separately and do not block this branch.
+  --overview   Include the pull-request overview in the analysis.
+  --json       Emit machine-readable JSON.
 
 Example:
   vcsentinel pr review --base main --json
 `
 )
 
+const runsHelp = `Purpose: manage tracked agent tasks that can be started, monitored, answered, stopped, retried, repaired, verified, followed, or cleaned up.
+
+Usage:
+  vcsentinel runs <subcommand> [flags]
+
+Subcommands:
+  start    Start a task from a prompt: --prompt <text> [--policy-id <id>] [--json]
+  status   Show one task or all tasks: [--run <id>] [--json]
+  logs     Read recorded activity: --run <id> [--after <activity-number>] [--limit N] [--json]
+  respond  Send an answer to a waiting task: --run <id> --text <answer> [--json]
+  abort    Ask a task to stop: --run <id> [--orphaned --reason "..."] [--json]
+  retry    Retry a failed task: --run <id> [--expected-revision N] [--json]
+  recover  Find or repair tasks needing recovery: --run <id> [--expected-revision N] [--json]
+           or --repair <id> [--json]
+  verify   Check one task's recorded history: --run <id> [--json]
+  attach   List, snapshot, or follow a task: [--run <id>] [--after <activity-number>] [--follow]
+  daemon   Manage the repository service: start|status|stop
+  prune    Remove old completed task records: --older-than <duration> [--json]
+
+Exit codes:
+  0  Success, including a valid no-op or clean stop.
+  1  Usage error: missing or unsupported command or flag.
+  2  The requested task was not found.
+  3  An expected revision did not match the saved record.
+  4  The requested action is not valid for the task's current state.
+  5  Storage, agent, service, or other infrastructure failure.
+
+Only the flags listed for a subcommand are accepted. Pruning is explicit and
+never automatic. See docs/design/runs-cli.md for JSON output and state details.
+`
+
 const (
-	runsStartHelp = `Purpose: start a durable run from an operator prompt executed by the configured agent chain.
+	runsStartHelp = `Purpose: start a tracked agent task from a prompt.
 
 Usage:
   ` + runsStartUsage + ` [--json]
 
 Flags:
-  --prompt     Prompt text for the agent (required).
-  --policy-id  Policy identifier (default operator).
+  --prompt     Prompt for the configured agent (required).
+  --policy-id  Policy name to use (default operator).
   --json       Emit machine-readable JSON.
+
+The command returns the task, job, and invocation identifiers so you can
+inspect or control it with the other runs commands.
 
 Example:
   vcsentinel runs start --prompt "refactor the parser" --json
 `
-	runsStatusHelp = `Purpose: show durable-run state summaries.
+	runsStatusHelp = `Purpose: show the current state of tracked tasks.
 
 Usage:
   ` + runsStatusUsage + `
 
 Flags:
-  --run   Restrict the report to one run.
+  --run   Show only this task.
   --json  Emit machine-readable JSON.
+
+Without --run, the command lists all tasks known to this repository.
 
 Example:
   vcsentinel runs status --run r1 --json
 `
-	runsRespondHelp = `Purpose: answer a pending decision of one awaiting run.
+	runsRespondHelp = `Purpose: send an answer to a task that is waiting for a decision.
 
 Usage:
   ` + runsRespondUsage + ` [--json]
 
 Flags:
-  --run   Run awaiting the decision (required).
-  --text  Response text delivered to the run (required).
+  --run   Task waiting for the answer (required).
+  --text  Answer text to send (required).
   --json  Emit machine-readable JSON.
 
 Example:
   vcsentinel runs respond --run r1 --text "use option B"
 `
-	runsAbortHelp = `Purpose: request cancellation of one active run.
+	runsAbortHelp = `Purpose: ask a running task to stop.
 
 Usage:
   ` + runsAbortUsage + ` [--json]
 
 Flags:
-  --run   Run to cancel (required).
-  --json  Emit machine-readable JSON.
+  --run        Task to stop (required).
+  --orphaned   Retire a task whose saved record is unfinished but whose owner is gone; requires --reason.
+  --reason     Explain the --orphaned decision.
+  --json       Emit machine-readable JSON.
+
+Without --orphaned, an unreachable task is not silently marked as stopped.
 
 Example:
   vcsentinel runs abort --run r1
 `
-	runsRetryHelp = `Purpose: retry a failed run under optimistic concurrency control.
+	runsRetryHelp = `Purpose: retry a task that failed.
 
 Usage:
   ` + runsRetryUsage + ` [--json]
 
 Flags:
-  --run                Failed run to retry (required).
-  --expected-revision  Refuse unless the stream head matches this revision.
+  --run                Failed task to retry (required).
+  --expected-revision  Retry only if the saved record still has this revision.
   --json               Emit machine-readable JSON.
+
+Use --expected-revision when you want the command to stop rather than act on a
+record that changed after you inspected it.
 
 Example:
   vcsentinel runs retry --run r1 --expected-revision 4
 `
-	runsRecoverHelp = `Purpose: inspect recovery classes and repair terminal-but-unprojected runs.
+	runsRecoverHelp = `Purpose: find tasks whose saved state needs attention, or repair one task when the command proves that it finished but its summary was not updated.
 
 Usage:
-  vcsentinel runs recover                     Read-only scan of every non-terminal run; exit 4 when an entry needs an operator decision.
-  vcsentinel runs recover --run <id> [--expected-revision N]
-                                            Recovery context for one run.
-  ` + runsRecoverRepairUsage + `
-                                            Rebuild the lagging snapshot by replaying the whole verified stream under one lock.
+  vcsentinel runs recover [--run <id>] [--expected-revision N] [--json]
+  ` + runsRecoverRepairUsage + ` [--json]
+
+Modes:
+  without --run or --repair  Read-only scan of unfinished tasks; exit 4 when a task needs a human decision.
+  --run <id>                 Show recovery information for one task.
+  --repair <id>              Rebuild the saved summary only for a task proven safe to repair.
 
 Flags:
-  --run                Target run.
-  --expected-revision  Refuse stale repairs unless the stream head matches.
-  --repair             Identity of the run to repair.
+  --run                Task to inspect.
+  --expected-revision  Proceed only if the saved record still has this revision.
+  --repair             Task to repair.
   --json               Emit machine-readable JSON.
 
---expected-revision is rejected on the scan and cannot combine with --repair.
+--expected-revision is rejected on the full scan and cannot be combined with
+--repair.
 `
-	runsVerifyHelp = `Purpose: verify the integrity of one run's event stream.
+	runsVerifyHelp = `Purpose: check that one task's saved activity records are complete and consistent.
 
 Usage:
   ` + runsVerifyUsage + ` [--json]
 
 Flags:
-  --run   Run to verify (required).
+  --run   Task to verify (required).
   --json  Emit machine-readable JSON.
 
 Example:
   vcsentinel runs verify --run r1
 `
-	runsPruneHelp = `Purpose: explicit operator maintenance: remove ONLY terminal execution records older than the cutoff that no review provenance references. Nothing purges automatically.
+	runsPruneHelp = `Purpose: explicitly remove old completed task records that are no longer referenced by review history.
 
 Usage:
   ` + runsPruneUsage + `
 
 Flags:
-  --older-than  Duration cutoff for the last event of candidate records (required).
+  --older-than  Keep only records whose last activity is newer than this duration (required).
   --json        Emit machine-readable JSON.
+
+Unfinished, corrupt, orphaned, referenced, or still-needed records are kept.
+Nothing is removed automatically.
 
 Example:
   vcsentinel runs prune --older-than 720h --json
 `
-	runsAttachHelp = `Purpose: observe one durable run live: list attachable candidates, print a point-in-time snapshot, or follow a run with the terminal UI.
+	runsAttachHelp = `Purpose: watch one tracked task, list tasks that can be watched, or follow a task until it finishes.
 
 Usage:
   ` + runsAttachUsage + `
 
 Modes:
-  without --run        List every non-terminal durable run as an attach
-                       candidate (read-only reconciled projection walk);
-                       exits 0 whether the listing is empty or not.
-  --run <id>           Print one plain-text observation snapshot rebuilt
-                       from Inspect plus event replay strictly after
-                       --after (default 0). Point-in-time view: terminal
-                       and non-terminal runs alike exit 0.
-  --run <id> --follow  Launch the Bubble Tea attach view over the same data
-                       pipeline; it keeps repolling from the last applied
-                       cursor until the run reaches its terminal state or
-                       you detach.
+  without --run        List every unfinished task that can be watched; the
+                       command exits 0 even when the list is empty.
+  --run <id>           Print one plain-text snapshot, including activity after
+                       --after (default 0). It returns immediately for both
+                       finished and unfinished tasks.
+  --run <id> --follow  Open the live view and refresh it from the last activity
+                       number until the task finishes or you detach.
 
 Flags:
-  --run    Run to observe.
-  --after  Replay events strictly after this cursor.
-  --follow Follow mode; requires --run.
+  --run    Task to observe.
+  --after  Include activity strictly after this activity number.
+  --follow Keep refreshing; requires --run.
 
 Exit contract:
-  0  clean quit in every mode: a followed run reaching its terminal state
-     freezes the view and exits 0, and SIGINT/SIGTERM detach exactly as
-     cleanly as pressing q. Other failures follow the shared runs codes
-     (2 run not found, 4 invalid state, 5 infrastructure).
+  0  clean quit in every mode. A followed task freezes when it finishes, and
+     SIGINT/SIGTERM detach as cleanly as pressing q.
+  2  task not found.
+  4  the requested action is not valid for the task's current state.
+  5  storage or other infrastructure failure.
 
-Follow-mode keys (the live footer lists only the keys active in the current
-session state):
+Follow-mode keys:
   q quit · r refresh · a abort · e respond · y retry (when retryable)
 `
-	runsDaemonHelp = `Purpose: manage the repository-local foreground daemon.
+	runsDaemonHelp = `Purpose: manage the repository-local background service used by tracked tasks.
 
 Usage:
   ` + runsDaemonUsage + `
 
 Subcommands:
-  start   Claim the repository, settle auto-recoverable interrupted runs,
-          serve the local transport, and block until SIGINT/SIGTERM or a
-          remote stop.
-  status  Print the live owner pid/started-at/host/transport/address.
-  stop    Ask the running daemon to shut down gracefully and print its
-          orphaned-runs summary.
+  start   Claim this repository, settle tasks that can be recovered safely,
+          serve local requests, and wait for a stop signal.
+  status  Show the service owner and connection details.
+  stop    Ask the service to shut down cleanly and print a summary of
+          unfinished tasks whose owner disappeared.
 
 Flags:
-  none. The three subcommands take no flags by contract: any argument beyond
-  the subcommand name is rejected as a usage error.
+  none. These three subcommands take no flags; extra arguments are usage
+  errors.
 
 Exit codes:
-  start   0 on a clean stop; 4 when another live daemon already owns the
-          repository (its pid is named); 5 otherwise.
-  status  0 while a live daemon answers; 2 with a deterministic message when
-          no live daemon is running for this repository; 5 when endpoint.json
-          exists but is unreadable or incomplete — corruption is never silent.
- stop    0 after a graceful shutdown; a missing or unreachable endpoint
-           follows the same not-running contract as status (exit 2); 5 on a
-           corrupt record or a daemon-side shutdown failure.
-	`
-	tuiHelp = `Purpose: open the full-screen control center over the repository registry snapshot, refreshed live while the session is open.
+  start   0 on a clean stop; 4 when another service already owns the
+          repository; 5 for another failure.
+  status  0 while a service is answering; 2 when none is running; 5 when the
+          saved service record is unreadable or incomplete.
+  stop    0 after a clean shutdown; 2 when no reachable service is running;
+          5 for a corrupt record or a shutdown failure.
+`
+	tuiHelp = `Purpose: open the full-screen interactive dashboard for registered repositories and tracked tasks.
 
 Usage:
   vcsentinel tui
@@ -485,7 +524,11 @@ Flags:
   none. Any extra argument or flag is rejected with exit 1.
 
 Notes:
-  When no daemon is live for the current repository, the control center starts one detached and owns it for the session, stopping it gracefully on exit. A daemon already owned by another session is left untouched. Startup or readiness failures exit 5 before the interface opens; stop failures print one error line but keep exit success.
+  If this repository has no running service, the interactive dashboard starts one in
+the background and owns it for the session, stopping it cleanly on exit. A
+service owned by another session is left untouched. Startup or readiness
+failures exit 5 before the interface opens; a stop failure prints an error but
+keeps a successful exit.
 
 Example:
   vcsentinel tui
@@ -493,17 +536,16 @@ Example:
 )
 
 // runsLogsHelp interpolates fmt.Sprint(runsLogsDefaultLimit), which is
-// not a constant expression, so this one entry is a var. The emitted bytes
-// match the former inline literal exactly.
-var runsLogsHelp = `Purpose: read the verified event stream of one run with cursor pagination.
+// not a constant expression, so this one entry is a var.
+var runsLogsHelp = `Purpose: read the recorded activity of one task in pages.
 
 Usage:
   ` + runsLogsUsage + ` [--json]
 
 Flags:
-  --run    Run whose events are read (required).
-  --after  Read events after this cursor.
-  --limit  Maximum number of events (default ` + fmt.Sprint(runsLogsDefaultLimit) + `).
+  --run    Task whose activity is read (required).
+  --after  Read records after this activity number.
+  --limit  Maximum number of records (default ` + fmt.Sprint(runsLogsDefaultLimit) + `).
   --json   Emit machine-readable JSON.
 
 Example:
