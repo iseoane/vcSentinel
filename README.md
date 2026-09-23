@@ -2,41 +2,50 @@
 
 A deterministic local guardian in Go that prevents massive change accumulation in Git worktrees operated by AI assistants. A single binary that behaves identically on **Windows** and **Debian Linux**.
 
+## Prerequisites
+
+- Git, for repository setup and worktree measurements.
+- Go 1.26.5 or newer, only when building from source or bootstrapping with `go install`.
+- A configured agent binary on `PATH` for agent-backed review and generated commit messages.
+- `gh` authenticated with GitHub for pull-request publication and releases.
+
 ## Quick path
 
-1. Build: `build.bat` (Windows) or `./build.sh` (Debian) → `bin/<version>/vcsentinel(.exe)`
-2. Set up: `vcsentinel init` → creates `.vcsentinel/vcsentinel.yml` and installs the `pre-commit` hook in this repository (not global: it does not affect your other repos)
-3. Work: run `vcsentinel check` before any change. If it says **CRITICAL** (>400 lines), stop and run `vcsentinel slice`.
+1. Build with `build.bat` (Windows) or `./build.sh` (Debian/Linux), or install a published release.
+2. Run `vcsentinel init` from the repository. It creates `.vcsentinel/vcsentinel.yml` and installs the repository-local `pre-commit` hook.
+3. Configure a validation profile if you will use `vcsentinel gate`.
+4. Run `vcsentinel check` before making changes. If it reports **CRITICAL** (>400 lines), use the non-interactive `slice plan` / `slice apply` flow for agent-driven work.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `vcsentinel check` | Audits the worktree's line volume: `SMALL`, `OPTIMAL_POINT` (200–400) or `CRITICAL` (>400). It is advisory and exits 0; the limit is enforced by `vcsentinel check --staged`, which rejects more than 400 authored lines in the stage with exit 1. |
-| `vcsentinel slice` | Splits pending changes into layered micro-commits with a plan you must approve before committing. |
-| `vcsentinel slice plan` | Proposes the plan **without committing anything**. With `--json` it emits the full plan; exit 3 if there are decisions only you can answer. |
-| `vcsentinel slice apply` | Executes an already-approved plan: `--plan plan.json --answers answers.json`. |
-| `vcsentinel init` | Injects the volume rule into your agents' prompts, creates the per-project configuration, and installs the `pre-commit` hook **in this repository** (in its common-dir, not a global folder: it does not affect your other repos). |
-| `vcsentinel uninit` | Reverts `init` in this repository: removes the volume rule, deletes the per-project config, and removes the hook (only if it is still the one vcSentinel installed). |
-| `vcsentinel install` / `vcsentinel upgrade` | Installs or updates the binary from the latest GitHub release, falling back to `go install` if the release is not available. |
-| `vcsentinel review` | Audits a commit (default HEAD) against the dimensions of its bundle and saves the record to the ledger. Flags: `<sha\|HEAD~n>` `--dims a,b` `--all` `--chain` `--gate` `--profile X` `--answer "..."` `--timeout N` `--prune` `--json`. `--timeout` overrides `review.timeout` only for that invocation (seconds). |
-| `vcsentinel refute` | Record an evidence-bound human refutation of one reviewed finding (clears only its block). Usage: `--sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
-| `vcsentinel accept` | Record a human acceptance of one reviewed finding (documents judgement, never clears the block). Usage: `--sha SHA --fingerprint FP --reason TEXT`. |
-| `vcsentinel reopen` | Record an evidence-bound human reopen of one cleared finding (blocks again). Usage: `--sha SHA --fingerprint FP --reason TEXT --line-start N --line-end M`. |
-| `vcsentinel lint` | Runs the commands defined in `lint_commands` of the configuration. |
-| `vcsentinel rebase` | Updates the branch with `fetch` + `rebase` against its upstream (asks for confirmation). |
-| `vcsentinel status` | Guardian summary: volume, audit records, and recent events. With `--json` it emits JSON; with `--prune` it deletes orphaned records. |
-| `vcsentinel metrics` | Prints deterministic local aggregates from the durable store (duration, success and failure). Reads only the local Git common directory. Unknown measurements render as `null`, never as zero, and unreadable evidence is an error rather than an empty store. Cost, tokens and scope stay unknown until an adapter reports them. Flag: `--json`. |
-| `vcsentinel doctor` | Preflight the local environment a review depends on (agents, search binary, codegraph gates, hook). Advisory, exits 0 like `check`. Flag: `--check-updates`. |
-| `vcsentinel pr` | Pull-request operations: `vcsentinel pr review` analyzes an unpublished branch, while `vcsentinel pr create` publishes through `gh`. The legacy `vcsentinel pr [gh arguments]` passthrough is removed. |
-| `vcsentinel pr review` | Analyzes the unpublished branch, then authors and saves its local judgement and evidence; it never publishes a PR. Flags: `--base X` `--parent X` `--overview` `--json`. |
-| `vcsentinel pr create` | Publishes the judgement `vcsentinel pr review` already authored: it audits nothing and requires a stored review for this branch whose head matches the current one, otherwise it exits 1 telling you to run `vcsentinel pr review`. It publishes the stored title and body, replacing only the `ci` step with the current CI outcome (see `ci:` in the configuration). Flags: `--base X` `--parent X` `--chain-pr` `--force --reason "..."`. |
-| `vcsentinel explain` | Explain the change profile, detected characteristics, risk, and cohesion of a commit range. Usage: `[<base>..<head>] [--json]`. |
-| `vcsentinel consent-diff` | Manage the local per-user consent to expose diffs to external agents (required before slice can generate commit messages through an agent). Usage: `grant\|revoke\|status`. |
-| `vcsentinel tui` | Open the full-screen control center over the repository registry snapshot, refreshed live while the session is open. |
-| `vcsentinel uninstall` | Removes the binary and the global configuration (`~/.vcsentinel/`). |
+| `vcsentinel check` | Measures worktree line volume: `SMALL`, `OPTIMAL_POINT` (200–400), or `CRITICAL` (>400). It is advisory; `check --staged` enforces the 400-line limit for a staged candidate. |
+| `vcsentinel slice` | Interactive flow for splitting pending changes into reviewable commits. |
+| `vcsentinel slice plan` | Proposes selections without committing. With `--json`, exit 3 means that explicit human decisions are required. |
+| `vcsentinel slice apply` | Applies an approved plan with `--plan plan.json --answers answers.json`. |
+| `vcsentinel init` | Adds managed guidance, creates project configuration, and installs the repository-local `pre-commit` check. |
+| `vcsentinel uninit` | Removes vcSentinel's managed guidance, project configuration, skill, and hook when they are still owned by vcSentinel. |
+| `vcsentinel install` / `vcsentinel upgrade` | Installs or updates the binary from the latest GitHub release, falling back to `go install` when necessary. |
+| `vcsentinel review` | Audits a commit (default `HEAD`) against its review dimensions and saves the record. Use `--gate` to fail on a critical finding. |
+| `vcsentinel refute` | Records evidence that one reviewed finding is invalid and clears only that finding's block. |
+| `vcsentinel accept` | Records human acceptance of one reviewed finding; it documents the decision but does not clear the block. |
+| `vcsentinel reopen` | Reopens a previously cleared finding with new evidence. |
+| `vcsentinel gate --stage pre-commit\|pre-push\|pr [--profile X]` | Runs the configured validation profile deterministically, without an agent. It does not review code quality; `review` owns semantic per-commit audits. |
+| `vcsentinel lint` | Runs the configured `lint_commands`. |
+| `vcsentinel rebase` | Fetches and rebases against the configured upstream after confirmation. |
+| `vcsentinel status` | Shows volume, review records, and recent events; supports `--json` and `--prune`. |
+| `vcsentinel metrics` | Prints deterministic local aggregates from the durable store; unknown measurements are `null`. |
+| `vcsentinel doctor` | Advises whether configured agents and review tools are ready. It exits 0 and never installs or gates work. |
+| `vcsentinel explain` | Explains the change profile, detected characteristics, risk, and cohesion of a commit range. |
+| `vcsentinel consent-diff grant\|revoke\|status` | Manages per-user consent to expose diffs to configured external agents. |
+| `vcsentinel pr review` | Analyzes the current branch and saves its judgement and evidence without publishing. |
+| `vcsentinel pr create` | Publishes a previously saved branch judgement through `gh`; it audits nothing. |
+| `vcsentinel runs <subcommand>` | Manages tracked durable tasks: `start`, `status`, `logs`, `respond`, `abort`, `retry`, `recover`, `verify`, `attach`, `daemon`, and `prune`. See [`docs/design/runs-cli.md`](docs/design/runs-cli.md). |
+| `vcsentinel tui` | Opens the full-screen control center over registered repositories and tracked tasks. |
+| `vcsentinel uninstall` | Removes the user-level installation and global configuration; it does not remove per-repository setup. |
 | `vcsentinel version` / `vcsentinel --version` | Prints the installed version. |
-| `vcsentinel help` / `vcsentinel --help` | Prints the full help. |
+| `vcsentinel help` / `vcsentinel --help` | Prints command help. |
 
 ## Slice: planned splitting
 
@@ -79,17 +88,7 @@ Special cases:
 
 ## Build
 
-## Optional context with CodeGraph
-
-With `review.codegraph_context: true`, local consent for external diff,
-a clean `.codegraph/` index and the upstream CLI on `PATH`, vcSentinel can
-add optional metadata about affected test paths to the semantic review.
-This is untrusted advisory data: it may inform the review, but it never
-authorizes validation scope and is omitted under any uncertainty. No
-source output from CodeGraph is sent. vcSentinel neither indexes nor
-administers CodeGraph: [CodeGraph](https://github.com/colbymchenry/codegraph).
-
-Binaries are generated in `bin/<version>/` (never committed; they are in `.gitignore`). The version is read from `release.yml` (the project's source of truth) and you can force it with the `VCSENTINEL_VERSION` variable:
+Binaries are generated in `bin/<version>/` (never committed; they are in `.gitignore`). The version is read from `release.yml` (the project's source of truth), and you can override it with `VCSENTINEL_VERSION`:
 
 ```bash
 # Windows: produces bin\0.1.0\vcsentinel.exe
@@ -104,9 +103,19 @@ export VCSENTINEL_VERSION=1.2.0
 ./build.sh
 ```
 
-Both scripts run `gofmt -w .` → `go vet ./...` → `go build -ldflags="-s -w -X main.version=<version>"`.
+Both scripts run `gofmt -w .`, `go vet ./...`, and `go build -ldflags="-s -w -X main.version=<version>"`.
 
 Quick verification of a change: `go build ./... && go vet ./...`
+
+## Optional context with CodeGraph
+
+With `review.codegraph_context: true`, a repository request for external
+diff context, local consent, a clean `.codegraph/` index, and the upstream CLI
+on `PATH`, vcSentinel can add optional metadata about affected test paths to
+semantic review. This is untrusted advisory data: it may inform review, but it
+never authorizes validation scope and is omitted under uncertainty. No source
+output from CodeGraph is sent. vcSentinel neither indexes nor administers
+CodeGraph: [CodeGraph](https://github.com/colbymchenry/codegraph).
 
 ## Publishing a release
 
@@ -156,7 +165,7 @@ This builds the binary into `$(go env GOPATH)/bin`. Make sure that folder is on 
 
 ## Uninstall
 
-`vcsentinel uninstall` removes the installed binary (both `~/.vcsentinel/bin/vcsentinel` on Windows and `/usr/local/bin/vcsentinel` on Linux, plus any copy inside `GOPATH/bin`) and deletes the global configuration `~/.vcsentinel/`.
+`vcsentinel uninstall` removes the binary installed by vcSentinel (`~/.vcsentinel/bin/vcsentinel.exe` on Windows or `/usr/local/bin/vcsentinel` on Debian/Linux) and deletes the global configuration `~/.vcsentinel/`. It does not remove a separate binary installed directly with `go install`; remove that copy from `$(go env GOPATH)/bin` yourself if needed.
 
 ## Asset naming convention
 
@@ -166,35 +175,43 @@ Each release must publish assets with this convention so that `install`/`upgrade
 - `vcsentinel-linux-amd64`
 - `vcsentinel-linux-arm64` (if published)
 
-## Configuration (Adapter Control)
+## Configuration
 
-Configuration is looked up in this order (the first one defining a field wins):
+Configuration is loaded in this order:
 
-1. **Per-project:** `.vcsentinel/vcsentinel.yml` — created by `vcsentinel init`
-2. **Global:** `~/.vcsentinel/vcsentinel.yml` — created by `vcsentinel install`
-3. Built-in **defaults**
+1. Built-in defaults.
+2. **Global:** `~/.vcsentinel/vcsentinel.yml` — created by `vcsentinel install`.
+3. **Per-project:** `.vcsentinel/vcsentinel.yml` — created by `vcsentinel init`.
 
-`active_agent` (default `auto`) selects the agent. In `auto`, the preference
-follows the **order in which the agents are declared in the yml** (not
-alphabetical): the first one whose binary is on the PATH is used first and,
-if it fails on a request, the next one is tried in that same order
-(per-request chain fallback, never cached). You can also set
-`active_agent: "claude"` or `"opencode"` for a concrete agent.
-`MY_SUB_AGENT` still exists as a temporary terminal override, but it is no
-longer the primary mechanism.
+Later files override earlier scalar and nested fields. Command lists such as
+`lint_commands`, `test_commands`, and `build_commands` append across files;
+validation capabilities merge by name and a project profile can replace the
+list of capabilities for that profile. Unknown keys are rejected by the
+strict parser instead of being silently ignored.
 
-Each agent defines its model and base effort, plus nested **profiles**
-(`cheap`, `normal`, `deep`…) that override model and/or effort. The audit
-dimensions (`review.dims`) map each dimension to a profile with two
-syntaxes: `agent.profile` (explicit agent) or just `profile` (applies to
-the `active_agent`: that agent's profile if concrete, or the auto chain in
-yml order with fallback).
+`active_agent` (default `auto`) selects the agent. In `auto`, vcSentinel uses
+the declaration order in the most specific configuration and chooses the first
+agent whose binary is on `PATH`; failed requests fall back to the next agent
+in that order for that request. Set `active_agent` to a concrete agent name to
+avoid the chain. `MY_SUB_AGENT` remains a temporary terminal override, but it
+is not the primary configuration mechanism.
+
+Each agent defines a model and base reasoning effort, plus nested profiles such
+as `cheap`, `normal`, and `deep`. Model identifiers in the example below are
+illustrative; replace them with identifiers supported by your configured
+adapter.
+
+`vcsentinel gate` runs `validation.profiles.standard` by default. Define that
+profile, or pass `--profile` with an existing profile. The gate is deterministic
+and does not use an agent; `vcsentinel review` owns semantic per-commit audits.
 
 Example of `.vcsentinel/vcsentinel.yml`:
 
 ```yaml
 version: "2.0"
 active_agent: "auto"
+commit_language: "en"
+request_external_agent_diff: false
 agents:
   claude:
     model: "claude-5-sonnet"
@@ -204,42 +221,48 @@ agents:
       normal: { model: "claude-5-sonnet", reasoning_effort: "high" }
       deep:   { model: "claude-opus",     reasoning_effort: "high" }
   opencode:
-    model: "deepseek-v4-flash-free"
+    model: "deepseek-v4-flash"
     reasoning_effort: "max"
     profiles:
-      cheap:  { model: "deepseek-v4-flash-free", reasoning_effort: "default" }
-      normal: { model: "deepseek-v4-flash-free", reasoning_effort: "high" }
-      deep:   { model: "deepseek-v4-flash-free", reasoning_effort: "max" }
+      cheap:  { model: "deepseek-v4-flash", reasoning_effort: "low" }
+      normal: { model: "deepseek-v4-flash", reasoning_effort: "high" }
+      deep:   { model: "deepseek-v4-flash", reasoning_effort: "max" }
 review:
-  timeout: 600
+  timeout: 900
   parallel: 2
-  # Evidence admission over durable runs (default true). Set false only to
-  # roll back to unverified acceptance; runs stay inspectable via
-  # `vcsentinel runs`.
+  codegraph_context: false
   evidence_admission: true
-  # Bounded cancellation escalation for owned provider trees (default true).
-  # Set false to keep cooperative cancellation while never signaling beyond
-  # the direct child.
   cancellation_escalation: true
-  dims:
-    spec: "opencode.cheap"
-    style: "opencode.cheap"
-    tests: "opencode.normal"
-    logic: "opencode.normal"
-    design: "deep"
-    security: "deep"
-# Optional GitHub Actions evidence for `vcsentinel pr create`. Without a
-# workflow the block is treated as absent: nothing is pushed or triggered and
-# the `ci` step of the published body renders "not observed by vcSentinel".
-# vcSentinel never guesses a workflow from .github/workflows.
+validation:
+  capabilities:
+    format:
+      command: "gofmt -l ."
+      fails_when: "output_not_empty"
+    lint:
+      command: "go vet ./..."
+    build:
+      command: "go build ./..."
+    unit_test:
+      command: "go test ./..."
+      supports_scope: true
+      scoped_command: "go test {packages}"
+      timeout: 120
+  profiles:
+    standard: [format, lint, build, unit_test]
+  mode: worktree
+# Optional GitHub Actions evidence for `vcsentinel pr create`. An empty or
+# absent workflow disables CI evidence; vcSentinel never guesses a workflow.
 ci:
   workflow: "verify.yml"   # required to enable CI; empty or absent disables it
   wait_seconds: 900        # optional; bound of the non-interactive wait
   poll_seconds: 15         # optional; interval between polls
 ```
 
-Note: the `gate.durable_runs` and `review.durable_runs` keys were removed
-(R11). `vcsentinel gate` always executes as ONE root durable run with validation
-and review logical jobs under it, and every reviewer call routes through the
-durable transport. A yaml still carrying the removed keys fails to load with
-an explicit unknown-key error; delete those keys when migrating.
+Older configurations using only `lint_commands`, `test_commands`, or
+`build_commands` remain supported: when no explicit validation capabilities
+exist, vcSentinel translates those lists into validation capabilities.
+
+The removed `gate.durable_runs` and `review.durable_runs` keys are invalid.
+A configuration containing them fails with an explicit unknown-key error.
+Durable tasks are managed through `vcsentinel runs`; `gate` only runs
+validation, while `review` records semantic per-commit findings.
