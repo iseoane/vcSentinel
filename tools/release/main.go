@@ -152,7 +152,7 @@ func buildAsset(version string, a asset, name string) error {
 	cmd := exec.Command("go", "build",
 		"-ldflags", fmt.Sprintf("-s -w -X main.version=%s", version),
 		"-o", outputPath,
-		"./cmd/vcsentinel/main.go",
+		"./cmd/vcsentinel",
 	)
 	cmd.Env = append(os.Environ(), "GOOS="+a.goos, "GOARCH="+a.goarch)
 
