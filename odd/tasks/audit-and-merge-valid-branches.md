@@ -14,7 +14,7 @@ Review local branches outside `main`, identify fixes still applicable to the reb
 - [x] Audit every local branch outside `main` for applicability and duplication.
 - [x] Select and merge only valid fixes into `main`.
 - [x] Verify the resulting repository with build, vet, tests, and status checks.
-- [ ] Clean only branches/worktrees confirmed obsolete after the audit.
+- [x] Clean only branches/worktrees confirmed obsolete after the audit.
 
 ## Candidates
 - `agent/pr-review-authors`
