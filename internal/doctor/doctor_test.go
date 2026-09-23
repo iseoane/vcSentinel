@@ -98,6 +98,29 @@ func writeHook(t *testing.T, commonDir, target string) {
 	}
 }
 
+func TestMarkedDirectHook(t *testing.T) {
+	isolateHome(t)
+	worktree := t.TempDir()
+	writeProjectYML(t, worktree, twoAgentYML)
+	common := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(common, "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "#!/bin/sh\n# vcsentinel:pre-commit-hook:v1\n# vcsentinel:executable=/usr/local/bin/vcsentinel\n'/usr/local/bin/vcsentinel' check --staged\n"
+	if err := os.WriteFile(filepath.Join(common, "hooks", "pre-commit"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stageBinaries(t, "claude", "opencode", "rg")
+	env := stubEnv(t, common, map[string]string{"claude": "ok", "opencode": "ok"}, nil)
+	got := findCheck(t, Run(worktree, Options{Env: env}), "hook", "pre-commit")
+	if !got.OK {
+		t.Fatalf("marked direct hook was rejected: %+v", got)
+	}
+	if !strings.Contains(got.Detail, "/usr/local/bin/vcsentinel") {
+		t.Errorf("hook detail = %q, want the stable target", got.Detail)
+	}
+}
+
 func findCheck(t *testing.T, rep Report, section, name string) Check {
 	t.Helper()
 	for _, c := range rep.Checks {

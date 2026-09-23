@@ -263,26 +263,62 @@ func looksLikeVersion(segment string) bool {
 	return true
 }
 
-// hookTarget extracts the quoted binary path from the generated hook shape:
-// #!/bin/sh\n"<binary>" check --staged\n.
+const (
+	directHookMarker           = "# vcsentinel:pre-commit-hook:v1"
+	directHookExecutablePrefix = "# vcsentinel:executable="
+)
+
+// hookTarget extracts the executable path from the generated legacy or marked
+// direct hook shape. Marked hooks declare the executable separately and repeat
+// it in the command, so both values must agree before the hook is accepted.
 func hookTarget(body string) (string, bool) {
 	lines := strings.Split(body, "\n")
 	if len(lines) < 2 || lines[0] != "#!/bin/sh" {
 		return "", false
 	}
-	rest := strings.TrimSpace(lines[1])
-	if !strings.HasPrefix(rest, "\"") {
-		return "", false
+	if lines[1] == directHookMarker {
+		if len(lines) != 4 && !(len(lines) == 5 && lines[4] == "") {
+			return "", false
+		}
+		if !strings.HasPrefix(lines[2], directHookExecutablePrefix) {
+			return "", false
+		}
+		declared := filepath.FromSlash(strings.TrimPrefix(lines[2], directHookExecutablePrefix))
+		target, ok := parseHookCommand(lines[3], true)
+		if !ok || filepath.ToSlash(target) != filepath.ToSlash(declared) {
+			return "", false
+		}
+		return filepath.ToSlash(target), true
 	}
-	end := strings.Index(rest[1:], "\"")
-	if end < 0 {
-		return "", false
-	}
-	target := rest[1 : 1+end]
-	if target == "" || !strings.HasSuffix(rest[1+end+1:], "check --staged") {
+	target, ok := parseHookCommand(strings.TrimSpace(lines[1]), false)
+	if !ok {
 		return "", false
 	}
 	return filepath.ToSlash(target), true
+}
+
+func parseHookCommand(line string, allowSingleQuotes bool) (string, bool) {
+	const suffix = " check --staged"
+	if !strings.HasSuffix(line, suffix) {
+		return "", false
+	}
+	token := strings.TrimSuffix(line, suffix)
+	switch {
+	case allowSingleQuotes && strings.HasPrefix(token, "'") && strings.HasSuffix(token, "'"):
+		value := strings.TrimSuffix(strings.TrimPrefix(token, "'"), "'")
+		if value == "" {
+			return "", false
+		}
+		return filepath.FromSlash(strings.ReplaceAll(value, "'\"'\"'", "'")), true
+	case strings.HasPrefix(token, "\"") && strings.HasSuffix(token, "\""):
+		value := strings.TrimSuffix(strings.TrimPrefix(token, "\""), "\"")
+		if value == "" || strings.Contains(value, "\"") {
+			return "", false
+		}
+		return filepath.FromSlash(value), true
+	default:
+		return "", false
+	}
 }
 
 func checkUpdates(opts Options, add func(string, string, bool, string, string)) {
