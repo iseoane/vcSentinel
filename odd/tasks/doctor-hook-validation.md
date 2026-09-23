@@ -41,7 +41,7 @@ Do not modify the existing unrelated dirty files or `.git/hooks/pre-commit` duri
 
 ## Delivery
 
-The user subsequently authorized commit and push delivery. This task record is included in the doctor fix commit; no pull request is being created.
+The user subsequently authorized commit and push delivery. This task record was delivered with work-unit commit `636dd2a` (`fix(doctor): accept marked direct pre-commit hooks`) and pushed to `origin/main`; no pull request is being created.
 
 ## Non-goals
 
