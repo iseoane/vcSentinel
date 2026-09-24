@@ -94,13 +94,21 @@ review:
 `
 
 func RunFullInstall() error {
+	if err := validateSetupTestOverrides(); err != nil {
+		return err
+	}
+	fallback, err := fallbackSetting()
+	if err != nil {
+		return err
+	}
+
 	fmt.Println("⬇️ Downloading the latest version from GitHub...")
 
 	PrepareGitHubToken()
 
 	release, err := fetchLatestRelease()
 	if err != nil {
-		if fallbackGoInstall {
+		if fallback {
 			if errFallback := InstallViaGoInstall(); errFallback != nil {
 				return fmt.Errorf("%v\nIn addition, the go install fallback failed: %v", err, errFallback)
 			}
@@ -123,7 +131,7 @@ func RunFullInstall() error {
 	defer os.Remove(tmpPath)
 
 	if err := downloadBinary(asset, tmpPath); err != nil {
-		if fallbackGoInstall {
+		if fallback {
 			if errFallback := InstallViaGoInstall(); errFallback != nil {
 				return fmt.Errorf("%v\nIn addition, the go install fallback failed: %v", err, errFallback)
 			}
@@ -257,17 +265,15 @@ func windowsBinaryPath(homeDir string) string {
 }
 
 func installWindows(tmpPath string) (string, error) {
-	homeDir, err := os.UserHomeDir()
+	dir, err := installRoot()
 	if err != nil {
-		return "", fmt.Errorf("could not identify the user's home directory: %w", err)
+		return "", err
 	}
-
-	dir := filepath.Join(homeDir, ".vcsentinel", "bin")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("could not create the directory %s: %w", dir, err)
 	}
 
-	destination := windowsBinaryPath(homeDir)
+	destination := filepath.Join(dir, goBinaryName())
 	if err := moveAndReplace(tmpPath, destination); err != nil {
 		return "", fmt.Errorf("could not install the binary at %s: %w", destination, err)
 	}
@@ -280,7 +286,13 @@ func installWindows(tmpPath string) (string, error) {
 }
 
 func needsWindowsPathUpdate(currentPath string, dir string) bool {
-	return !strings.Contains(currentPath, dir)
+	wanted := filepath.Clean(dir)
+	for _, entry := range strings.Split(currentPath, ";") {
+		if strings.EqualFold(filepath.Clean(strings.TrimSpace(entry)), wanted) {
+			return false
+		}
+	}
+	return true
 }
 
 func addWindowsPath(dir string) error {
@@ -292,11 +304,24 @@ func addWindowsPath(dir string) error {
 		return nil
 	}
 
-	newPath := currentPath + ";" + dir
-	command := fmt.Sprintf("[Environment]::SetEnvironmentVariable('Path', '%s', 'User')", newPath)
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", command)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("could not add %s to the user PATH: %w", dir, err)
+	newPath := dir
+	if currentPath != "" {
+		newPath = currentPath + ";" + dir
+	}
+	pathFile, err := windowsPathFileOverride()
+	if err != nil {
+		return err
+	}
+	if pathFile != "" {
+		if err := writeWindowsPathFile(pathFile, newPath); err != nil {
+			return err
+		}
+	} else {
+		command := fmt.Sprintf("[Environment]::SetEnvironmentVariable('Path', '%s', 'User')", newPath)
+		cmd := exec.Command("powershell", "-NoProfile", "-Command", command)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("could not add %s to the user PATH: %w", dir, err)
+		}
 	}
 
 	fmt.Printf("🛣️ Path added to the user PATH: %s\n", dir)
@@ -305,6 +330,21 @@ func addWindowsPath(dir string) error {
 }
 
 func windowsUserPath() (string, error) {
+	pathFile, err := windowsPathFileOverride()
+	if err != nil {
+		return "", err
+	}
+	if pathFile != "" {
+		content, err := os.ReadFile(pathFile)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", nil
+			}
+			return "", fmt.Errorf("could not read the user PATH file %s: %w", pathFile, err)
+		}
+		return strings.TrimRight(string(content), "\r\n"), nil
+	}
+
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('Path','User')")
 	out, err := cmd.Output()
 	if err != nil {
@@ -313,12 +353,42 @@ func windowsUserPath() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+func writeWindowsPathFile(path, value string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("could not create the user PATH file directory %s: %w", filepath.Dir(path), err)
+	}
+
+	suffix := ""
+	if content, err := os.ReadFile(path); err == nil {
+		if strings.HasSuffix(string(content), "\r\n") {
+			suffix = "\r\n"
+		} else if strings.HasSuffix(string(content), "\n") {
+			suffix = "\n"
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("could not read the user PATH file %s: %w", path, err)
+	}
+
+	if err := os.WriteFile(path, []byte(value+suffix), 0644); err != nil {
+		return fmt.Errorf("could not write the user PATH file %s: %w", path, err)
+	}
+	return nil
+}
+
 func linuxBinaryPath() string {
 	return "/usr/local/bin/vcsentinel"
 }
 
 func installLinux(tmpPath string) (string, error) {
-	destination := linuxBinaryPath()
+	destination, err := installBinaryPath()
+	if err != nil {
+		return "", err
+	}
+	if os.Getenv(testInstallRootEnv) != "" {
+		if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+			return "", fmt.Errorf("could not create the directory %s: %w", filepath.Dir(destination), err)
+		}
+	}
 
 	if err := moveAndReplace(tmpPath, destination); err != nil {
 		if err := runSudoMove(tmpPath, destination); err != nil {
@@ -375,7 +445,10 @@ func addShellPathBlock() error {
 		paths = append(paths, zshrc)
 	}
 
-	const line = `export PATH="/usr/local/bin:$PATH"`
+	line, err := shellPathLine()
+	if err != nil {
+		return err
+	}
 
 	for _, path := range paths {
 		content, err := os.ReadFile(path)
@@ -386,7 +459,7 @@ func addShellPathBlock() error {
 			continue
 		}
 
-		block := fmt.Sprintf("\n# vcSentinel\nexport PATH=\"/usr/local/bin:$PATH\"\n")
+		block := fmt.Sprintf("\n# vcSentinel\n%s\n", line)
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("could not update %s: %w", path, err)

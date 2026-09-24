@@ -246,6 +246,25 @@ func TestBinaryPaths(t *testing.T) {
 	}
 }
 
+func TestShellPathBlockUsesInstallRootOverride(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+	installRoot := filepath.Join(t.TempDir(), "install-root")
+	t.Setenv(testInstallRootEnv, installRoot)
+
+	if err := addShellPathBlock(); err != nil {
+		t.Fatalf("addShellPathBlock returned error: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(home, ".zshrc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `export PATH="` + filepath.ToSlash(installRoot) + `:$PATH"`
+	if !strings.Contains(string(content), want) {
+		t.Fatalf("shell PATH block = %q, want it to contain %q", content, want)
+	}
+}
+
 func TestNeedsWindowsPathUpdate(t *testing.T) {
 	if needsWindowsPathUpdate("C:\\x;C:\\y", "C:\\x") {
 		t.Error("should not add a directory already present in the PATH")

@@ -10,13 +10,21 @@ import (
 )
 
 func RunUpgradeFromGitHub() error {
+	if err := validateSetupTestOverrides(); err != nil {
+		return err
+	}
+	fallback, err := fallbackSetting()
+	if err != nil {
+		return err
+	}
+
 	fmt.Println("🔄 Looking for the latest version...")
 
 	PrepareGitHubToken()
 
 	release, err := fetchLatestRelease()
 	if err != nil {
-		if fallbackGoInstall {
+		if fallback {
 			if errFallback := UpgradeViaGoInstall(); errFallback != nil {
 				return fmt.Errorf("%v\nIn addition, the go install fallback failed: %v", err, errFallback)
 			}
@@ -37,7 +45,7 @@ func RunUpgradeFromGitHub() error {
 
 	fmt.Printf("⬇️ Downloading %s...\n", release.TagName)
 
-	tmpFile, err := os.CreateTemp(filepath.Dir(currentBinary), "vcsentinel-upgrade-*")
+	tmpFile, err := os.CreateTemp(filepath.Dir(currentBinary), upgradeTempPattern())
 	if err != nil {
 		return fmt.Errorf("could not create the temporary download file: %w", err)
 	}
@@ -46,12 +54,15 @@ func RunUpgradeFromGitHub() error {
 	defer os.Remove(tmpPath)
 
 	if err := downloadBinary(asset, tmpPath); err != nil {
-		if fallbackGoInstall {
+		if fallback {
 			if errFallback := UpgradeViaGoInstall(); errFallback != nil {
 				return fmt.Errorf("%v\nIn addition, the go install fallback failed: %v", err, errFallback)
 			}
 			return nil
 		}
+		return err
+	}
+	if err := validateStagedBinary(tmpPath); err != nil {
 		return err
 	}
 
@@ -98,6 +109,9 @@ func UpgradeViaGoInstall() error {
 		return err
 	}
 	binary := filepath.Join(gopath, "bin", goBinaryName())
+	if err := validateStagedBinary(binary); err != nil {
+		return err
+	}
 
 	var backup string
 	switch runtime.GOOS {
@@ -118,6 +132,25 @@ func UpgradeViaGoInstall() error {
 	}
 
 	fmt.Println("✅ Updated via go install")
+	return nil
+}
+
+func upgradeTempPattern() string {
+	if runtime.GOOS == "windows" {
+		return "vcsentinel-upgrade-*.exe"
+	}
+	return "vcsentinel-upgrade-*"
+}
+
+func validateStagedBinary(path string) error {
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, 0755); err != nil {
+			return fmt.Errorf("could not grant execution permissions to the downloaded binary: %w", err)
+		}
+	}
+	if err := verifyBinary(path); err != nil {
+		return fmt.Errorf("the downloaded binary failed validation: %w", err)
+	}
 	return nil
 }
 

@@ -18,6 +18,10 @@ const repositoryHooksNotice = "   The pre-commit hook installed in each reposito
 // the directory off the user PATH, cleans the global configuration and
 // restores the shell files. It does not touch per-project configurations.
 func RunFullUninstall() error {
+	if err := validateSetupTestOverrides(); err != nil {
+		return err
+	}
+
 	fmt.Println("🗑️ Uninstalling vcSentinel...")
 
 	homeDir, err := os.UserHomeDir()
@@ -50,8 +54,11 @@ func RunFullUninstall() error {
 }
 
 func uninstallWindows(homeDir string) error {
-	dir := filepath.Join(homeDir, ".vcsentinel", "bin")
-	destination := windowsBinaryPath(homeDir)
+	dir, err := installRoot()
+	if err != nil {
+		return err
+	}
+	destination := filepath.Join(dir, goBinaryName())
 
 	if err := removeBinary(destination); err != nil {
 		return err
@@ -68,7 +75,11 @@ func uninstallWindows(homeDir string) error {
 }
 
 func uninstallLinux() error {
-	if err := removeBinary(linuxBinaryPath()); err != nil {
+	destination, err := installBinaryPath()
+	if err != nil {
+		return err
+	}
+	if err := removeBinary(destination); err != nil {
 		return err
 	}
 	return nil
@@ -99,14 +110,32 @@ func removeWindowsPath(dir string) error {
 	if err != nil {
 		return err
 	}
-	if !needsWindowsPathUpdate(currentPath, dir) {
+	if needsWindowsPathUpdate(currentPath, dir) {
 		return nil
 	}
 
-	command := fmt.Sprintf("$env:Path = (($env:Path -split ';') | Where-Object { $_ -ne '%s' }) -join ';'; [Environment]::SetEnvironmentVariable('Path', $env:Path, 'User')", dir)
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", command)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("could not remove %s from the user PATH: %w", dir, err)
+	pathFile, err := windowsPathFileOverride()
+	if err != nil {
+		return err
+	}
+	if pathFile != "" {
+		entries := strings.Split(currentPath, ";")
+		kept := make([]string, 0, len(entries))
+		wanted := filepath.Clean(dir)
+		for _, entry := range entries {
+			if !strings.EqualFold(filepath.Clean(strings.TrimSpace(entry)), wanted) {
+				kept = append(kept, entry)
+			}
+		}
+		if err := writeWindowsPathFile(pathFile, strings.Join(kept, ";")); err != nil {
+			return err
+		}
+	} else {
+		command := fmt.Sprintf("$env:Path = (($env:Path -split ';') | Where-Object { $_ -ne '%s' }) -join ';'; [Environment]::SetEnvironmentVariable('Path', $env:Path, 'User')", dir)
+		cmd := exec.Command("powershell", "-NoProfile", "-Command", command)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("could not remove %s from the user PATH: %w", dir, err)
+		}
 	}
 
 	fmt.Printf("🛣️ Path removed from the user PATH: %s\n", dir)
@@ -124,7 +153,10 @@ func removeShellPathBlock() error {
 	zshrc := filepath.Join(homeDir, ".zshrc")
 	bashrc := filepath.Join(homeDir, ".bashrc")
 
-	const line = `export PATH="/usr/local/bin:$PATH"`
+	line, err := shellPathLine()
+	if err != nil {
+		return err
+	}
 	block := "\n# vcSentinel\n" + line + "\n"
 
 	for _, path := range []string{zshrc, bashrc} {

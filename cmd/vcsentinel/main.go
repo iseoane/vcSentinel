@@ -261,6 +261,8 @@ func main() {
 			fmt.Printf("❌ Uninstall failed: %v\n", err)
 			os.Exit(1)
 		}
+		return
+	default:
 		fmt.Printf("❌ Unknown subcommand: '%s'. Use 'version', 'help', 'init', 'uninit', 'check', 'slice', 'review', 'refute', 'accept', 'reopen', 'gate', 'lint', 'rebase', 'status', 'metrics', 'doctor', 'explain', 'pr', 'runs', 'tui', 'consent-diff', 'install', 'upgrade' or 'uninstall'.\n", subcommand)
 		os.Exit(1)
 	}

@@ -17,14 +17,15 @@ import (
 )
 
 const (
-	upgradeE2EHelperEnv       = "VCSENTINEL_UPGRADE_E2E_HELPER"
-	upgradeE2ETempDirEnv      = "VCSENTINEL_UPGRADE_E2E_TEMP_DIR"
-	upgradeE2EDestinationEnv  = "VCSENTINEL_UPGRADE_E2E_DESTINATION_DIR"
-	upgradeE2EVersion         = "vcSentinel version: e2e-upgraded"
-	upgradeE2EReleaseTag      = "v9.9.9-e2e"
-	upgradeE2EAssetURLPath    = "/assets/vcsentinel"
-	upgradeE2ESourceDirectory = "/tmp"
-	upgradeE2EDestDirectory   = "/dev/shm"
+	upgradeE2EInvalidHelperEnv = "VCSENTINEL_UPGRADE_E2E_INVALID_HELPER"
+	upgradeE2EHelperEnv        = "VCSENTINEL_UPGRADE_E2E_HELPER"
+	upgradeE2ETempDirEnv       = "VCSENTINEL_UPGRADE_E2E_TEMP_DIR"
+	upgradeE2EDestinationEnv   = "VCSENTINEL_UPGRADE_E2E_DESTINATION_DIR"
+	upgradeE2EVersion          = "vcSentinel version: e2e-upgraded"
+	upgradeE2EReleaseTag       = "v9.9.9-e2e"
+	upgradeE2EAssetURLPath     = "/assets/vcsentinel"
+	upgradeE2ESourceDirectory  = "/tmp"
+	upgradeE2EDestDirectory    = "/dev/shm"
 )
 
 // TestUpgradeFromGitHubAcrossFilesystems runs the upgrade in a copied test
@@ -282,4 +283,136 @@ func assertDirectoryContainsOnly(t *testing.T, directory string, expected ...str
 			t.Errorf("unexpected artifact %s in %s", entry.Name(), directory)
 		}
 	}
+}
+
+func TestUpgradeRejectsInvalidDownloadedBinaryBeforeReplacement(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("could not locate the test executable: %v", err)
+	}
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		t.Fatalf("could not resolve the test executable: %v", err)
+	}
+	original, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatalf("could not read the test executable: %v", err)
+	}
+
+	tempRoot := t.TempDir()
+	tempDir := filepath.Join(tempRoot, "tmp")
+	homeDir := filepath.Join(tempRoot, "home")
+	configDir := filepath.Join(homeDir, ".vcsentinel")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("could not create the disposable home: %v", err)
+	}
+	configPath := filepath.Join(configDir, "vcsentinel.yml")
+	configBefore := []byte("version: \"test\"\n")
+	if err := os.WriteFile(configPath, configBefore, 0644); err != nil {
+		t.Fatalf("could not create the disposable configuration: %v", err)
+	}
+	destinationDir := filepath.Join(tempDir, "destination")
+	if err := os.MkdirAll(destinationDir, 0755); err != nil {
+		t.Fatalf("could not create the disposable destination: %v", err)
+	}
+	destination := filepath.Join(destinationDir, filepath.Base(executable))
+	if err := os.WriteFile(destination, original, 0755); err != nil {
+		t.Fatalf("could not copy the test executable: %v", err)
+	}
+
+	assetName := "vcsentinel-" + runtime.GOOS + "-" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		assetName += ".exe"
+	}
+	assetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/release":
+			body, err := json.Marshal(ReleaseInfo{
+				TagName: "v-invalid-e2e",
+				Assets: []ReleaseAsset{{
+					Name: assetName,
+					URL:  assetServerURL(r, "/assets/invalid"),
+				}},
+			})
+			if err != nil {
+				t.Errorf("could not encode the invalid release: %v", err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+		case "/assets/invalid":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("not-a-runnable-vcsentinel-binary"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer assetServer.Close()
+
+	// The release endpoint is only used by the copied helper process. It is
+	// intentionally loopback so this test cannot contact GitHub.
+	releaseURL := assetServer.URL + "/release"
+	cmd := exec.Command(destination, "-test.run=^TestUpgradeRejectsInvalidDownloadedBinaryHelper$", "-test.v")
+	cmd.Env = append(os.Environ(),
+		upgradeE2EInvalidHelperEnv+"=1",
+		testReleaseAPIURLEnv+"="+releaseURL,
+		testInstallRootEnv+"="+filepath.Join(tempDir, "install-root"),
+		testDisableGoInstallEnv+"=1",
+		"GITHUB_TOKEN=e2e-test-token",
+		"TMPDIR="+tempDir,
+		"TMP="+tempDir,
+		"TEMP="+tempDir,
+		"HOME="+homeDir,
+		"USERPROFILE="+homeDir,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("invalid downloaded binary helper failed: %v\n%s", err, output)
+	}
+
+	installed, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatalf("could not read the disposable binary after rejection: %v", err)
+	}
+	if !bytes.Equal(installed, original) {
+		t.Fatal("invalid downloaded binary replaced the current binary")
+	}
+	configAfter, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("could not read the disposable configuration after rejection: %v", err)
+	}
+	if !bytes.Equal(configAfter, configBefore) {
+		t.Fatal("invalid downloaded binary changed the configuration")
+	}
+	assertDirectoryContainsOnly(t, destinationDir, filepath.Base(destination))
+}
+
+func TestUpgradeRejectsInvalidDownloadedBinaryHelper(t *testing.T) {
+	if os.Getenv(upgradeE2EInvalidHelperEnv) != "1" {
+		t.Skip("helper test is only run by TestUpgradeRejectsInvalidDownloadedBinary")
+	}
+
+	currentBinary, err := locateCurrentBinary()
+	if err != nil {
+		t.Fatalf("could not locate the disposable current binary: %v", err)
+	}
+	before, err := os.ReadFile(currentBinary)
+	if err != nil {
+		t.Fatalf("could not read the current binary before upgrade: %v", err)
+	}
+	if err := RunUpgradeFromGitHub(); err == nil {
+		t.Fatal("RunUpgradeFromGitHub accepted an invalid downloaded binary")
+	}
+	after, err := os.ReadFile(currentBinary)
+	if err != nil {
+		t.Fatalf("could not read the current binary after rejection: %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("the current binary changed after staged validation failed")
+	}
+	assertDirectoryContainsOnly(t, filepath.Dir(currentBinary), filepath.Base(currentBinary))
+}
+
+func assetServerURL(request *http.Request, path string) string {
+	return "http://" + request.Host + path
 }

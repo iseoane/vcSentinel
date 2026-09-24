@@ -132,7 +132,10 @@ type ReleaseInfo struct {
 }
 
 func fetchLatestRelease() (ReleaseInfo, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
+	url, err := releaseAPIURL()
+	if err != nil {
+		return ReleaseInfo{}, err
+	}
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
