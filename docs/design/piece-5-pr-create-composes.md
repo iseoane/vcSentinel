@@ -52,11 +52,14 @@ vcsentinel pr create
    `The stored pr review covers <old-short>, but this branch is now at <new-short>. Re-run 'vcsentinel pr review'.`
    This is a different failure from step 3 and must not share its message: one
    means you never reviewed, the other means you reviewed and then changed it.
-5. The entry references evidence files that are untracked at the head ⇒ exit
-   `1`, naming them and the commit that fixes it:
+5. The entry references evidence receipts that are missing or untracked at
+   the actual head ⇒ exit `1`, naming them and the commit that fixes it:
    `The pr review evidence is not committed: <paths>. Run 'git add .vcsentinel/evidence && git commit -m "chore(evidence): record the pr review logs"' and re-run 'vcsentinel pr review'.`
-   Re-running `pr review` is required, not optional: committing the evidence
-   moves the head, and the entry is keyed by it.
+   Evidence validation remains exact: reject unsafe or non-canonical paths and
+   require each path's working-tree bytes to match the blob at the actual
+   `HEAD`; never accept a similarly named file or a modified working copy.
+   Re-running `pr review` is required, not optional: committing the receipt
+   moves the actual head, and the entry is bound to it.
 6. Entry verdict is a block ⇒ **publish anyway.** This piece does not turn a
    semantic verdict into a publication gate, and an earlier draft of this plan
    that did was wrong. The existing contract is T1.8: red deterministic
@@ -71,9 +74,19 @@ vcsentinel pr create
    forbids and its byte-equality test would have caught.
 
 The refusals in steps 3 to 5 are not semantic gates. They say there is nothing
-to publish, or that what there is does not describe this tree. Do not add a
-flag that skips reading the entry: there is no legitimate case for publishing
-a judgement that does not exist.
+to publish, that what there is does not describe this tree, or that its
+immutable evidence cannot be verified. Do not add a flag that skips reading
+the entry: there is no legitimate case for publishing a judgement that does
+not exist or evidence that cannot be reproduced exactly.
+
+The evidence-commit convergence is intentional. The first `pr review` writes a
+current-head-bound body and a semantic receipt. After the receipt-only commit,
+the entry is stale because actual `HEAD` moved, but the semantic range is
+unchanged: a second `pr review` excludes the terminal evidence suffix, writes a
+new body bound to the new actual `HEAD`, and reproduces byte-identical receipt
+bytes. `pr create` then checks the receipt path and exact blob bytes at that
+actual head. A third evidence commit is neither needed nor accepted as a way to
+hide receipt nondeterminism.
 
 ## 4. CI
 
@@ -213,7 +226,10 @@ authoring business through the side door.
   replaced correctly, and the result does not exceed the limit. Piece 4 §2.8
   reserves the bytes for exactly this; this test is what proves the reserve is
   enough.
-- Untracked evidence ⇒ exit `1` naming the files, nothing pushed, no `gh` call.
+- Missing, untracked, path-invalid, or working-tree-byte-mismatched evidence
+  receipt ⇒ exit `1` naming the files, nothing pushed, no `gh` call. A
+  receipt-only commit followed by a second `pr review` must converge: the new
+  body attests the actual head while the receipt bytes remain unchanged.
 - The four CI outcomes, each rendering its own row, with a fake `gh`.
 - A concluded-successful run whose head SHA differs from the branch head
   renders `⚠️`, never `✅`. This test must fail if the SHA comparison is

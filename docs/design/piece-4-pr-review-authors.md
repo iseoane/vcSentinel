@@ -217,40 +217,43 @@ than taking the first, and returns a typed "absent" for a body with none.
 
 Long evidence is written to the repository working tree, not only pasted. The
 body is truncated at `PRBodyLimit` (`internal/review/pr_review_body.go` and
-`internal/review/pr_review_truncation.go`); an evidence log is not.
+`internal/review/pr_review_truncation.go`); an evidence receipt is not.
 
 - Location: `.vcsentinel/evidence/<branch-slug>-<branch-identity-hash>/<step>.log`,
   where the identity hash is derived from the exact branch name to distinguish
   branches with the same slug.
+- `pr review` writes two deliberately separate artifacts. The persisted entry
+  owns the publication body, including an attestation bound to the actual
+  current `HEAD`. The `pr-review.log` evidence file owns an immutable versioned
+  JSON receipt containing only the branch, semantic base, semantic head, and
+  chronological semantic SHAs. It contains no current-head/evidence-only SHA,
+  timestamp, body text, or model output.
+- The semantic range is resolved from the complete `merge-base..HEAD` history.
+  A commit is evidence-only only when it changes at least one path and every
+  changed path is exactly `.vcsentinel/evidence/<branch-identity>/<step>.log`.
+  Path inspection is NUL-safe and recognition is based on paths, never on a
+  commit subject. Only a contiguous terminal suffix is excluded from semantic
+  ledger lookup, audits, pending/unaudited reporting, volume, overview, and
+  net review. An evidence-only commit followed by a semantic commit fails
+  explicitly rather than silently hiding an intermediate artifact.
+- The public `shas` range and all semantic reviewer inputs stop at the semantic
+  head, while the actual current `HEAD` remains separate for the entry's
+  `HeadSHA` and the body attestation. This is what allows an evidence commit to
+  advance the branch without changing the review being described.
 - Written by `pr review`, in the working tree, as ordinary files. It does not
-  commit them: creating a commit is not this command's job.
-- **Committing and enforcing evidence belongs to Piece 5.** Piece 4 writes the
-  deterministic logs but does not print a commit command, and the current
-  `pr create` path does not inspect them. The required commit/re-review loop and
-  the refusal for evidence absent from `HEAD` are specified in
-  [Piece 5 §3](piece-5-pr-create-composes.md#3-the-entry-is-mandatory).
+  commit them: creating a commit is not this command's job. Piece 5 enforces
+  that the receipt is present at `HEAD` byte-for-byte.
 - **The loop must terminate, and saying so is part of the spec.** Committing
-  the evidence moves the head, which invalidates the entry, which forces a
-  second `pr review`, which writes the evidence again. That converges in
-  exactly two rounds only if the evidence is a deterministic function of the
-  reviewed work: the per-commit ledger records, and the lint/test/build exit
-  codes. Adding a commit that contains only evidence logs changes none of
-  those, so the second run writes byte-identical files, the tracked-and-
-  matching check passes, and no third commit is needed. Two things follow and
-  must be enforced: the evidence rendering must not embed a timestamp or any
-  other value that changes between runs, and a second run whose evidence bytes
-  differ from the tracked ones is a bug in that determinism — report it as an
-  error naming the file, do not ask for a third commit.
+  the receipt advances `HEAD` and requires a second `pr review`, but the
+  semantic range and receipt inputs do not change. The second run therefore
+  writes byte-identical receipt bytes while authoring a new current-head-bound
+  publication body. No third evidence commit is needed. A changed receipt is
+  a determinism bug and must be reported rather than normalized at publication.
 - Consequence to accept: these logs are inside the worktree, so `vcsentinel check`
   measures them. They are not authored code, so they must classify as such —
   verify with a test that a large evidence log does not push `check --staged`
   over the 400-line budget. If it does, the classification is the bug, not the
   budget.
-- The body is rendered **before** evidence is written. Piece 4 then writes a
-  `pr-review` log containing that rendered body and records its repository-relative
-  path in the persisted entry. The current body neither links nor embeds evidence.
-  Committed-link validation and body embedding remain Piece 5 work, when the
-  persisted entry is consumed for publication.
 
 ### 2.8 Truncation order
 
@@ -297,9 +300,11 @@ to publish without one.
   intentionally not identity: the identity hash is derived from the exact branch
   name to distinguish branches such as `feature/review` and `feature-review`.
   The head SHA prevents a stale entry from being reused.
-- Content: the rendered body, the attestation struct, the verdict, the head
-  SHA, the branch, and `at`. `pr review` records `at` as its UTC authoring time;
-  JSON persists the `time.Time` value in RFC 3339 format.
+- Content: the rendered publication body, the current-`HEAD` attestation, the
+  verdict, the actual head SHA, the branch, and `at`. `pr review` records `at`
+  as its UTC authoring time; JSON persists the `time.Time` value in RFC 3339
+  format. The `Evidence` paths point to immutable semantic receipts, not to the
+  current-head-bound publication body.
 - `AnalyzeBranch` validates every SHA in the resolved range before reading any
   per-commit metadata or consulting blob reuse. A malformed SHA anywhere in the
   range fails closed before it can adopt a record into the ledger; no evidence,
@@ -348,7 +353,7 @@ type Entry struct {
     Verdict     string
     Body        string
     Attestation Attestation
-    Evidence    []string // repo-relative paths of the evidence logs written after rendering
+    Evidence    []string // repo-relative paths of immutable semantic evidence receipts
     At          time.Time
 }
 ```
@@ -403,10 +408,12 @@ not change it.
   predecessor completes. Interrupted replacement states recover the backup-only
   generation and remove completed-replacement backup residue.
 - `--audit-pending` exits `1` with the retirement message and audits nothing.
-- Evidence writing: `pr review` writes the rendered body as its `pr-review`
-  log and persists the repository-relative path; two runs over the same records
-  write byte-identical evidence files. Evidence linking and HEAD validation are
-  Piece 5 tests.
+- Evidence writing: `pr review` writes a versioned semantic JSON receipt as its
+  `pr-review` log and persists the repository-relative path; two runs over the
+  same semantic range write byte-identical receipt bytes even when an
+  evidence-only commit changed current `HEAD`. The publication body remains a
+  separate current-head-bound entry artifact. Evidence linking and HEAD
+  validation are Piece 5 tests.
 - `What Changed`: bullets render in order; parsing rejects fewer than three or
   more than six non-empty `Changed` bullets after trimming, while an unavailable
   overview renders the fallback.
@@ -449,8 +456,9 @@ Report the observed result of each command.
    `<details>` shapes, the matrix moved inside the review step.
 4. `feat(review): seal a machine attestation into the body` — the comment, the
    parser, its tests.
-5. `feat(review): write the evidence files` — write the rendered body as the
-   `pr-review` log and persist its path; body links remain Piece 5 work.
+5. `feat(review): write deterministic semantic evidence` — write the
+   versioned semantic receipt as the `pr-review` log, persist its path, and
+   keep it separate from the current-head-bound publication body.
 6. `feat(review): persist the net entry for Piece 5 consumption` — the store
    entry, the key, and the staleness rule.
 7. `feat(pr): retire --audit-pending` — the refusal and its message.
