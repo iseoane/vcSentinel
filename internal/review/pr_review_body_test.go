@@ -112,6 +112,29 @@ func TestRenderPRReviewBodyUsesTheFixedSectionOrder(t *testing.T) {
 	}
 }
 
+func TestPRReviewAttestationUsesCurrentHeadOverSemanticHead(t *testing.T) {
+	result := &BranchResult{
+		Branch:       "feature/evidence",
+		SHAs:         []string{"semantic-head"},
+		HeadSHA:      "current-head",
+		SemanticBase: "semantic-base",
+		SemanticHead: "semantic-head",
+		Net:          &NetReview{From: "semantic-base", To: "semantic-head", Audit: AuditResult{Verdict: VerdictOK}},
+	}
+	attestation := BuildPRReviewAttestation(result, nil, TemplateVerification{}, nil)
+	if attestation.HeadSHA != "current-head" {
+		t.Fatalf("attestation HeadSHA = %q, want current HEAD", attestation.HeadSHA)
+	}
+	if _, err := RenderPRReviewBody(result, nil, TemplateVerification{}, attestation, nil); err != nil {
+		t.Fatalf("RenderPRReviewBody() rejected current-head attestation: %v", err)
+	}
+	wrong := attestation
+	wrong.HeadSHA = "semantic-head"
+	if _, err := RenderPRReviewBody(result, nil, TemplateVerification{}, wrong, nil); err == nil {
+		t.Fatal("RenderPRReviewBody() accepted a semantic-head attestation for a current-head result")
+	}
+}
+
 func TestRenderPRReviewBodyPreservesIntentProvenanceAndReportsMissingCommits(t *testing.T) {
 	body, err := RenderPRReviewBody(&BranchResult{SHAs: []string{
 		"aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd",

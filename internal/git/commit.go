@@ -167,31 +167,49 @@ func CurrentBranchFrom(worktree string) (string, error) {
 }
 
 // FilesOfCommit returns the paths of the files a commit touches, useful for
-// inferring the audit's layer.
+// inferring the audit's layer. The historical name is kept for callers; the
+// implementation delegates to ChangedPathsOfCommit so path parsing has one
+// NUL-safe source of truth.
+func FilesOfCommit(sha string) ([]string, error) {
+	return ChangedPathsOfCommit(sha)
+}
+
+// ChangedPathsOfCommit returns the raw, repository-relative paths changed by a
+// commit. Git's -z output is mandatory here: paths may contain spaces,
+// newlines, leading/trailing whitespace, or other bytes that line-oriented
+// and TrimSpace-based parsing would corrupt.
 //
 // Like DiffCommit, on a merge it lists the diff against the first parent:
-// `git show --name-only` also emits an empty list on clean merges.
-func FilesOfCommit(sha string) ([]string, error) {
+// `git diff --name-only` also emits an empty list on clean merges.
+func ChangedPathsOfCommit(sha string) ([]string, error) {
 	isMerge, err := isMergeCommit(sha)
 	if err != nil {
 		return nil, err
 	}
 	var out string
 	if isMerge {
-		out, err = runGitOutput("diff", "--name-only", sha+"^1", sha, "--")
+		out, err = runGitOutput("diff", "--name-only", "-z", sha+"^1", sha, "--")
 	} else {
-		out, err = runGitOutput("show", "--name-only", "--format=", sha, "--")
+		out, err = runGitOutput("show", "--name-only", "-z", "--format=", sha, "--")
 	}
 	if err != nil {
 		return nil, err
 	}
-	var files []string
-	for _, line := range strings.Split(out, "\n") {
-		if path := strings.TrimSpace(line); path != "" {
-			files = append(files, path)
+	return nulSeparatedPaths(out), nil
+}
+
+func nulSeparatedPaths(output string) []string {
+	if output == "" {
+		return nil
+	}
+	parts := strings.Split(output, "\x00")
+	paths := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part != "" {
+			paths = append(paths, part)
 		}
 	}
-	return files, nil
+	return paths
 }
 
 // FileContentAtCommit returns the exact content of a file as it existed in

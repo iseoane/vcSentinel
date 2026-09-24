@@ -313,10 +313,17 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		}
 	}
 	if len(res.SHAs) == 0 {
-		fmt.Fprintln(w, "? review produced no branch head")
+		fmt.Fprintln(w, "? review produced no semantic branch head")
 		return 1
 	}
-	head := res.SHAs[len(res.SHAs)-1]
+	head := res.HeadSHA
+	if head == "" {
+		if res.Net != nil && res.Net.To != "" {
+			head = res.Net.To
+		} else {
+			head = res.SHAs[len(res.SHAs)-1]
+		}
+	}
 	if !store.IsValidGitObjectID(head) {
 		fmt.Fprintln(w, "? review produced invalid branch head")
 		return 1
@@ -349,7 +356,16 @@ func RunPrReviewWith(w, progress io.Writer, worktree string, flags FlagsPrReview
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1
 	}
-	evidence, err := deps.WriteEvidence(worktree, res.Branch, []review.EvidenceLog{{Step: "pr-review", Content: body}})
+	semanticBase, semanticHead := res.SemanticBase, res.SemanticHead
+	if semanticHead == "" {
+		semanticHead = res.SHAs[len(res.SHAs)-1]
+	}
+	receipt, err := review.RenderEvidenceReceipt(res.Branch, semanticBase, semanticHead, res.SHAs)
+	if err != nil {
+		fmt.Fprintf(w, "? %v\n", err)
+		return 1
+	}
+	evidence, err := deps.WriteEvidence(worktree, res.Branch, []review.EvidenceLog{{Step: "pr-review", Content: receipt}})
 	if err != nil {
 		fmt.Fprintf(w, "? %v\n", err)
 		return 1

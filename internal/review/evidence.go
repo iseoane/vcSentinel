@@ -3,6 +3,7 @@ package review
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,62 @@ import (
 
 // EvidenceLog is the complete deterministic log for one Pipeline step.
 type EvidenceLog struct{ Step, Content string }
+
+const evidenceReceiptVersion = "v1"
+
+// EvidenceReceipt is the immutable, semantic identity of one PR review. It
+// deliberately contains no current HEAD, evidence-only commit, timestamp,
+// body, or model output: the same semantic review produces the same bytes
+// after a generated-evidence commit advances HEAD.
+type EvidenceReceipt struct {
+	Version      string   `json:"version"`
+	Branch       string   `json:"branch"`
+	SemanticBase string   `json:"semantic_base"`
+	SemanticHead string   `json:"semantic_head"`
+	SemanticSHAs []string `json:"semantic_shas"`
+}
+
+// RenderEvidenceReceipt renders the stable versioned receipt as one JSON line
+// followed by exactly one trailing newline. Struct field order is intentional:
+// encoding/json preserves it, so the receipt remains byte-identical across
+// reviews with identical semantic inputs.
+func RenderEvidenceReceipt(branch, semanticBase, semanticHead string, semanticSHAs []string) (string, error) {
+	if semanticSHAs == nil {
+		semanticSHAs = []string{}
+	}
+	receipt := EvidenceReceipt{
+		Version:      evidenceReceiptVersion,
+		Branch:       branch,
+		SemanticBase: semanticBase,
+		SemanticHead: semanticHead,
+		SemanticSHAs: append([]string{}, semanticSHAs...),
+	}
+	payload, err := json.Marshal(receipt)
+	if err != nil {
+		return "", fmt.Errorf("marshal evidence receipt: %w", err)
+	}
+	return string(payload) + "\n", nil
+}
+
+// IsGeneratedEvidencePath reports whether candidate is exactly one path that
+// WriteEvidence can generate for branch. A generated path has one branch
+// identity directory and one canonical slugged step ending in .log; no nested
+// path, traversal, separator variant, or arbitrary evidence file qualifies.
+func IsGeneratedEvidencePath(branch, candidate string) bool {
+	if candidate == "" || strings.ContainsRune(candidate, 0) || strings.Contains(candidate, "\\") {
+		return false
+	}
+	prefix := path.Join(".vcsentinel", "evidence", evidenceDirName(branch)) + "/"
+	if !strings.HasPrefix(candidate, prefix) || path.Clean(candidate) != candidate {
+		return false
+	}
+	step := strings.TrimPrefix(candidate, prefix)
+	if !strings.HasSuffix(step, ".log") {
+		return false
+	}
+	step = strings.TrimSuffix(step, ".log")
+	return step != "" && !strings.Contains(step, "/") && evidenceSlug(step) == step
+}
 
 // evidenceDirName is the directory one branch's logs live in. It is the slug
 // for a human reading the tree, plus a short hash of the EXACT branch name so

@@ -14,6 +14,7 @@ import (
 
 	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 	"github.com/ISeoane-Quental/vcSentinel/internal/git"
+	"github.com/ISeoane-Quental/vcSentinel/internal/ops"
 	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 	"github.com/ISeoane-Quental/vcSentinel/internal/validation"
@@ -744,6 +745,73 @@ func TestRunPrCreateForceRequiresReasonAndPublishesRedValidation(t *testing.T) {
 // renderer change that breaks what ComposePRBody needs from the body would
 // still pass here. That half remains uncovered; do not read this test as
 // proving the whole round trip.
+func TestPrReviewWritesSemanticReceiptAndCurrentHeadBody(t *testing.T) {
+	semanticBase := strings.Repeat("b", 40)
+	semanticHead := strings.Repeat("c", 40)
+	currentHead := strings.Repeat("d", 40)
+	result := &review.BranchResult{
+		Branch:       "feature/receipt",
+		SHAs:         []string{semanticHead},
+		HeadSHA:      currentHead,
+		SemanticBase: semanticBase,
+		SemanticHead: semanticHead,
+		Volume:       1,
+		Decision:     "single",
+		Net: &review.NetReview{
+			From:  semanticBase,
+			To:    semanticHead,
+			Audit: review.AuditResult{Verdict: review.VerdictOK},
+		},
+	}
+	var evidence []review.EvidenceLog
+	var saved store.PRReviewEntry
+	deps := DepsPrReview{
+		AnalyzeBranch: func(*review.Ledger, review.BranchOptions) (*review.BranchResult, error) {
+			return result, nil
+		},
+		RecordEvent: func(string, string, int, []string, ops.EventDetail, string) error { return nil },
+		EventDetail: func(string, *review.BranchResult, bool) (ops.EventDetail, error) {
+			return ops.EventDetail{}, nil
+		},
+		WriteEvidence: func(_ string, _ string, logs []review.EvidenceLog) ([]string, error) {
+			evidence = append([]review.EvidenceLog(nil), logs...)
+			return []string{".vcsentinel/evidence/feature-receipt/pr-review.log"}, nil
+		},
+		SavePRReview: func(_ string, entry *store.PRReviewEntry) error {
+			saved = *entry
+			return nil
+		},
+		CommitMessage: func(string) (string, error) { return "feat: receipt", nil },
+	}
+	var output, progress bytes.Buffer
+	if code := RunPrReviewWith(&output, &progress, repoRoot(t), FlagsPrReview{Base: "main"}, netReviewWiring(), deps); code != 0 {
+		t.Fatalf("RunPrReviewWith() exit = %d, output=%s, progress=%s", code, output.String(), progress.String())
+	}
+	if saved.HeadSHA != currentHead {
+		t.Fatalf("saved HeadSHA = %q, want current HEAD %q", saved.HeadSHA, currentHead)
+	}
+	attestation, err := review.ParseAttestation(saved.Body)
+	if err != nil {
+		t.Fatalf("saved body attestation: %v", err)
+	}
+	if attestation.HeadSHA != currentHead {
+		t.Fatalf("saved body attestation HeadSHA = %q, want current HEAD %q", attestation.HeadSHA, currentHead)
+	}
+	if len(evidence) != 1 || evidence[0].Step != "pr-review" {
+		t.Fatalf("evidence = %+v, want one pr-review receipt", evidence)
+	}
+	wantReceipt, err := review.RenderEvidenceReceipt(result.Branch, semanticBase, semanticHead, result.SHAs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence[0].Content != wantReceipt {
+		t.Fatalf("evidence content = %q, want semantic receipt %q", evidence[0].Content, wantReceipt)
+	}
+	if evidence[0].Content == saved.Body || strings.Contains(evidence[0].Content, currentHead) {
+		t.Fatal("evidence receipt contains the current-head-bound publication body or head")
+	}
+}
+
 func TestPrReviewAuthoredEntryValidatesForPrCreate(t *testing.T) {
 	attestation := review.BuildPRReviewAttestation(&review.BranchResult{}, nil, review.TemplateVerification{NotAttempted: true}, nil)
 	attestation.Branch = "feat/example"

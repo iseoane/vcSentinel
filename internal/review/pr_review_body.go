@@ -77,12 +77,9 @@ func RenderPRReviewBody(res *BranchResult, intents []IntentLine, verification Te
 // lockstep.
 func BuildPRReviewAttestation(res *BranchResult, intents []IntentLine, verification TemplateVerification, dispositions []FindingDisposition) Attestation {
 	verdict := VerdictDeBranch(res.Records, dispositions)
-	head := ""
-	if len(res.SHAs) > 0 {
-		head = res.SHAs[len(res.SHAs)-1]
-	}
+	head := currentHeadForPR(res)
 	if res.Net != nil {
-		verdict, head = res.Net.Audit.Verdict, res.Net.To
+		verdict = res.Net.Audit.Verdict
 	}
 	steps := pipelineSteps(res, intents, verification, dispositions)
 	attestationSteps := make([]AttestationStep, 0, len(steps))
@@ -94,17 +91,30 @@ func BuildPRReviewAttestation(res *BranchResult, intents []IntentLine, verificat
 
 func validateAttestation(res *BranchResult, attestation Attestation) error {
 	verdict := VerdictDeBranch(res.Records, nil)
-	head := ""
-	if len(res.SHAs) > 0 {
-		head = res.SHAs[len(res.SHAs)-1]
-	}
+	head := currentHeadForPR(res)
 	if res.Net != nil {
-		verdict, head = res.Net.Audit.Verdict, res.Net.To
+		verdict = res.Net.Audit.Verdict
 	}
 	if attestation.Branch != res.Branch || attestation.HeadSHA != head || attestation.Verdict != verdict {
 		return errors.New("render pr review body: attestation does not match branch result")
 	}
 	return nil
+}
+
+// currentHeadForPR returns the actual current branch head when AnalyzeBranch
+// supplied it. The fallbacks preserve the older BranchResult test seams,
+// where only the semantic SHAs or net range existed.
+func currentHeadForPR(res *BranchResult) string {
+	if res.HeadSHA != "" {
+		return res.HeadSHA
+	}
+	if res.Net != nil && res.Net.To != "" {
+		return res.Net.To
+	}
+	if len(res.SHAs) > 0 {
+		return res.SHAs[len(res.SHAs)-1]
+	}
+	return ""
 }
 
 func renderIntentLines(intents []IntentLine, shas []string) string {

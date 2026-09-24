@@ -430,6 +430,82 @@ func TestAnalyzeBranchAuditsPending(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBranchExcludesTerminalEvidenceFromSemanticInputs(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	semanticSHA := commitInBranch(t, "feature.txt", "semantic\n")
+	evidencePaths, err := WriteEvidence(".", "feature", []EvidenceLog{{Step: "pr-review", Content: "stable receipt\n"}})
+	if err != nil {
+		t.Fatalf("WriteEvidence: %v", err)
+	}
+	runGit(t, "add", "--", evidencePaths[0])
+	runGit(t, "commit", "-m", "chore: record generated evidence")
+	evidenceSHA := strings.TrimSpace(gitOutput(t, "rev-parse", "HEAD"))
+	semanticBase := strings.TrimSpace(gitOutput(t, "merge-base", "main", "HEAD"))
+
+	stub := &auditorStub{auditOutput: auditOutputOK}
+	res, err := AnalyzeBranch(NewLedger(gitDir), BranchOptions{
+		Factory: stubFactory(stub), Parallel: 1, NetReview: &NetReviewOptions{},
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeBranch: %v", err)
+	}
+	if !reflect.DeepEqual(res.SHAs, []string{semanticSHA}) {
+		t.Fatalf("semantic SHAs = %v, want [%s]", res.SHAs, semanticSHA)
+	}
+	if !reflect.DeepEqual(res.EvidenceSHAs, []string{evidenceSHA}) {
+		t.Fatalf("evidence SHAs = %v, want [%s]", res.EvidenceSHAs, evidenceSHA)
+	}
+	if res.HeadSHA != evidenceSHA {
+		t.Errorf("HeadSHA = %q, want actual current HEAD %q", res.HeadSHA, evidenceSHA)
+	}
+	if res.SemanticBase != semanticBase || res.SemanticHead != semanticSHA {
+		t.Errorf("semantic range = %q..%q, want %q..%q", res.SemanticBase, res.SemanticHead, semanticBase, semanticSHA)
+	}
+	if len(res.Records) != 1 || res.Records[0].SHA != semanticSHA {
+		t.Fatalf("records = %+v, want only the semantic commit", res.Records)
+	}
+	if len(res.Pending) != 1 || res.Pending[0] != semanticSHA || len(res.Unaudited) != 0 {
+		t.Fatalf("pending/unaudited = %v/%v, want semantic pending and no unaudited commits", res.Pending, res.Unaudited)
+	}
+	if res.Volume != 1 {
+		t.Errorf("Volume = %d, want semantic volume 1", res.Volume)
+	}
+	if res.Net == nil || res.Net.From != semanticBase || res.Net.To != semanticSHA {
+		t.Fatalf("net range = %+v, want %s..%s", res.Net, semanticBase, semanticSHA)
+	}
+}
+
+func TestAnalyzeBranchRejectsEvidenceBeforeSemanticCommit(t *testing.T) {
+	gitDir := prepareBranchRepo(t)
+	commitInBranch(t, "feature.txt", "semantic one\n")
+	evidencePaths, err := WriteEvidence(".", "feature", []EvidenceLog{{Step: "pr-review", Content: "stable receipt\n"}})
+	if err != nil {
+		t.Fatalf("WriteEvidence: %v", err)
+	}
+	runGit(t, "add", "--", evidencePaths[0])
+	runGit(t, "commit", "-m", "chore: record generated evidence")
+	commitInBranch(t, "follow-up.txt", "semantic two\n")
+
+	_, err = AnalyzeBranch(NewLedger(gitDir), BranchOptions{OnlyPending: true})
+	if err == nil || !strings.Contains(err.Error(), "evidence-only commit") || !strings.Contains(err.Error(), "terminal") {
+		t.Fatalf("AnalyzeBranch error = %v, want an explicit non-terminal evidence error", err)
+	}
+}
+
+func TestEvidenceCommitMessageAloneDoesNotMakeACommitEvidenceOnly(t *testing.T) {
+	prepareBranchRepo(t)
+	commitInBranch(t, "ordinary.txt", "semantic\n")
+	runGit(t, "commit", "--amend", "-m", "chore(evidence): ordinary semantic change")
+	sha := strings.TrimSpace(gitOutput(t, "rev-parse", "HEAD"))
+	got, err := isEvidenceOnlyCommit(sha, "feature")
+	if err != nil {
+		t.Fatalf("isEvidenceOnlyCommit: %v", err)
+	}
+	if got {
+		t.Fatal("a commit with a semantic path was classified as evidence-only from its message")
+	}
+}
+
 func TestDeterministicFindingsForCommitOnlyAppliesToExplicitSHA(t *testing.T) {
 	deterministicFindings := []Finding{{Source: SourceValidation}}
 

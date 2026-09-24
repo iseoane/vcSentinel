@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -219,6 +220,56 @@ func TestFilesOfCommit(t *testing.T) {
 	}
 	if len(files) != 1 || files[0] != "a.go" {
 		t.Errorf("files = %+v, expected [a.go]", files)
+	}
+}
+
+func TestNulSeparatedPathsPreservesPathBytes(t *testing.T) {
+	got := nulSeparatedPaths(" leading name.txt\x00line\nbreak.txt\x00trailing name.txt\x00")
+	want := []string{" leading name.txt", "line\nbreak.txt", "trailing name.txt"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("nulSeparatedPaths() = %q, want %q", got, want)
+	}
+}
+
+func TestChangedPathsOfCommitPreservesWhitespace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skips the real git repository integration in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available in PATH")
+	}
+
+	dir := prepareTestRepo(t, map[string]string{"base.txt": "base\n"})
+	if err := os.MkdirAll(filepath.Join(dir, "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{" leading.txt", filepath.Join("nested", "name with spaces.txt")}
+	for _, path := range paths {
+		if err := os.WriteFile(filepath.Join(dir, path), []byte("content\n"), 0644); err != nil {
+			t.Fatalf("write %q: %v", path, err)
+		}
+	}
+	gitPaths := make([]string, len(paths))
+	for index, path := range paths {
+		gitPaths[index] = filepath.ToSlash(path)
+	}
+	addArgs := append([]string{"add", "--"}, gitPaths...)
+	runGitInDir(t, dir, addArgs...)
+	runGitInDir(t, dir, "commit", "-m", "feat: preserve changed paths")
+	t.Chdir(dir)
+
+	got, err := ChangedPathsOfCommit(strings.TrimSpace(runGitInDir(t, dir, "rev-parse", "HEAD")))
+	if err != nil {
+		t.Fatalf("ChangedPathsOfCommit returned error: %v", err)
+	}
+	want := map[string]bool{" leading.txt": true, filepath.ToSlash(filepath.Join("nested", "name with spaces.txt")): true}
+	if len(got) != len(want) {
+		t.Fatalf("ChangedPathsOfCommit returned %q, want exactly %v", got, want)
+	}
+	for _, path := range got {
+		if !want[path] {
+			t.Errorf("ChangedPathsOfCommit returned unexpected path %q", path)
+		}
 	}
 }
 

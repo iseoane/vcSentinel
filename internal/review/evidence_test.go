@@ -3,6 +3,7 @@ package review
 import (
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"testing"
 )
@@ -28,6 +29,50 @@ func TestWriteEvidenceIsDeterministic(t *testing.T) {
 	}
 	if string(firstBytes) != string(secondBytes) {
 		t.Fatalf("evidence changed between identical runs: %q != %q", firstBytes, secondBytes)
+	}
+}
+
+func TestRenderEvidenceReceiptIsStableAndVersioned(t *testing.T) {
+	shas := []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	first, err := RenderEvidenceReceipt("feature/evidence", "base-sha", shas[0], shas)
+	if err != nil {
+		t.Fatalf("first RenderEvidenceReceipt() error = %v", err)
+	}
+	second, err := RenderEvidenceReceipt("feature/evidence", "base-sha", shas[0], append([]string(nil), shas...))
+	if err != nil {
+		t.Fatalf("second RenderEvidenceReceipt() error = %v", err)
+	}
+	const want = `{"version":"v1","branch":"feature/evidence","semantic_base":"base-sha","semantic_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","semantic_shas":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}
+`
+	if first != want || second != want {
+		t.Fatalf("receipt bytes = %q / %q, want %q", first, second, want)
+	}
+}
+
+func TestIsGeneratedEvidencePathIsStrict(t *testing.T) {
+	branch := "feature/evidence"
+	directory := evidenceDirName(branch)
+	valid := path.Join(".vcsentinel", "evidence", directory, "pr-review.log")
+	for _, candidate := range []string{
+		valid,
+		path.Join(".vcsentinel", "evidence", directory, "test-1.log"),
+	} {
+		if !IsGeneratedEvidencePath(branch, candidate) {
+			t.Errorf("IsGeneratedEvidencePath(%q) = false, want true", candidate)
+		}
+	}
+	for _, candidate := range []string{
+		".vcsentinel/evidence/" + directory,
+		path.Join(".vcsentinel", "evidence", directory, ".log"),
+		path.Join(".vcsentinel", "evidence", directory, "nested", "pr-review.log"),
+		path.Join(".vcsentinel", "evidence", directory, "pr-review.txt"),
+		path.Join(".vcsentinel", "evidence", directory, "Pr-review.log"),
+		path.Join(".vcsentinel", "evidence", evidenceDirName("feature/other"), "pr-review.log"),
+		path.Join(".vcsentinel", "evidence", directory, "..", "notes.log"),
+	} {
+		if IsGeneratedEvidencePath(branch, candidate) {
+			t.Errorf("IsGeneratedEvidencePath(%q) = true, want false", candidate)
+		}
 	}
 }
 

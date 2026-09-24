@@ -25,7 +25,7 @@ type HistoricalFinding struct {
 	ClassificationError string
 }
 type NetReview struct {
-	From, To string // merge_base(base_or_resolved_parent, HEAD)..resolved HEAD
+	From, To string // semantic merge_base(base_or_resolved_parent, HEAD)..semantic HEAD
 	Audit    AuditResult
 	Context  []HistoricalFinding
 }

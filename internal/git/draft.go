@@ -310,7 +310,7 @@ func numstatForChange(record gitChangeRecord) (added int, binary bool, err error
 		if record.OldPath != "" {
 			paths = []string{record.OldPath, record.Path}
 		}
-		args := []string{"diff", "--numstat", "--no-renames", "HEAD", "--"}
+		args := []string{"diff", "--numstat", "--unified=0", "--no-renames", "HEAD", "--"}
 		for _, path := range paths {
 			args = append(args, literalPathspec(path))
 		}

@@ -154,7 +154,21 @@ type UnauditedCommit struct {
 // range, the records, the real volume and the single/chain decision.
 type BranchResult struct {
 	Branch string
-	SHAs   []string
+	// SHAs is the semantic range in chronological order. Generated evidence
+	// commits are retained in EvidenceSHAs and excluded from this public range.
+	SHAs []string
+	// HeadSHA is the actual current branch HEAD, including any terminal
+	// generated-evidence commits. It is separate from the semantic head so
+	// publication attestation and stale-review checks remain bound to reality.
+	HeadSHA string `json:"-"`
+	// SemanticBase and SemanticHead identify the immutable range represented by
+	// SHAs. SemanticHead is SemanticBase when the range has no semantic commits.
+	SemanticBase string `json:"-"`
+	SemanticHead string `json:"-"`
+	// EvidenceSHAs is the contiguous terminal suffix excluded from semantic
+	// analysis. It is diagnostic/internal state and is not part of the existing
+	// public JSON shape.
+	EvidenceSHAs []string `json:"-"`
 	// Pending is the SHAs that had no review record when this call STARTED
 	// (before the audit loop below runs): it answers "how many new commits
 	// did this pass discover", which is what the pr-review/pr-create event
@@ -210,19 +224,31 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	currentHead, err := git.SHAHead()
+	if err != nil {
+		return nil, err
+	}
 	mergeBase, err := git.MergeBase(base, "HEAD")
 	if err != nil {
 		return nil, err
 	}
-	shas, err := branchRangeSHAs(mergeBase, "HEAD")
+	completeSHAs, err := branchRangeSHAs(mergeBase, "HEAD")
 	if err != nil {
 		return nil, err
 	}
 	// Validate the complete range before reading commit metadata or consulting
 	// the blob store. Blob reuse can adopt a record into the destination ledger,
 	// so any later malformed SHA must fail before the first ledger mutation.
-	if err := validateBranchSHAs(shas); err != nil {
+	if err := validateBranchSHAs(completeSHAs); err != nil {
 		return nil, err
+	}
+	shas, evidenceSHAs, err := splitSemanticRange(completeSHAs, branch)
+	if err != nil {
+		return nil, err
+	}
+	semanticHead := mergeBase
+	if len(shas) > 0 {
+		semanticHead = shas[len(shas)-1]
 	}
 
 	var pending []string
@@ -308,26 +334,30 @@ func AnalyzeBranch(ledger *Ledger, opts BranchOptions) (*BranchResult, error) {
 	}
 	unaudited := unauditedCommitSubjects(stillUnaudited)
 
-	volume, err := git.RangeNumstat(mergeBase, "HEAD")
+	volume, err := git.RangeNumstat(mergeBase, semanticHead)
 	if err != nil {
 		return nil, err
 	}
 
 	res := &BranchResult{
-		Branch: branch, SHAs: shas, Pending: pending, Unaudited: unaudited,
-		Records: records, Volume: volume,
+		Branch:       branch,
+		SHAs:         shas,
+		HeadSHA:      currentHead,
+		SemanticBase: mergeBase,
+		SemanticHead: semanticHead,
+		EvidenceSHAs: evidenceSHAs,
+		Pending:      pending,
+		Unaudited:    unaudited,
+		Records:      records,
+		Volume:       volume,
 	}
-	if opts.NetReview != nil { // T8.3: mergeBase already is merge_base(base_or_resolved_parent, HEAD)
+	if opts.NetReview != nil { // T8.3: the net review uses the semantic range, not generated evidence commits
 		if opts.PrepareNetReview != nil {
 			if err := opts.PrepareNetReview(shas); err != nil {
 				return nil, err
 			}
 		}
-		head := mergeBase
-		if len(shas) > 0 {
-			head = shas[len(shas)-1]
-		}
-		if res.Net, err = runNetReview(opts.NetReview, opts, mergeBase, head, records); err != nil {
+		if res.Net, err = runNetReview(opts.NetReview, opts, mergeBase, semanticHead, records); err != nil {
 			return nil, err
 		}
 	}
@@ -366,6 +396,51 @@ func validateBranchSHAs(shas []string) error {
 		}
 	}
 	return nil
+}
+
+// splitSemanticRange removes only a contiguous terminal suffix of commits
+// whose changed paths are all generated evidence for branch. An evidence-only
+// commit in the middle of the range is an explicit integrity error: silently
+// dropping it would hide a later semantic commit that was built on an
+// intermediate evidence artifact.
+func splitSemanticRange(allSHAs []string, branch string) (semantic, evidence []string, err error) {
+	if len(allSHAs) == 0 {
+		return nil, nil, nil
+	}
+	evidenceOnly := make([]bool, len(allSHAs))
+	for index, sha := range allSHAs {
+		evidenceOnly[index], err = isEvidenceOnlyCommit(sha, branch)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	suffixStart := len(allSHAs)
+	for suffixStart > 0 && evidenceOnly[suffixStart-1] {
+		suffixStart--
+	}
+	for index := 0; index < suffixStart; index++ {
+		if evidenceOnly[index] {
+			return nil, nil, fmt.Errorf("evidence-only commit %s is followed by a semantic commit; generated evidence must be a terminal range suffix", allSHAs[index])
+		}
+	}
+	return append([]string(nil), allSHAs[:suffixStart]...), append([]string(nil), allSHAs[suffixStart:]...), nil
+}
+
+func isEvidenceOnlyCommit(sha, branch string) (bool, error) {
+	paths, err := git.ChangedPathsOfCommit(sha)
+	if err != nil {
+		return false, fmt.Errorf("could not inspect changed paths for commit %s: %w", sha, err)
+	}
+	if len(paths) == 0 {
+		return false, nil
+	}
+	for _, changedPath := range paths {
+		if !IsGeneratedEvidencePath(branch, changedPath) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // deterministicFindingsForValidatedSHA returns the findings as-is only when
