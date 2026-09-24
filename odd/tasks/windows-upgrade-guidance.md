@@ -1,6 +1,6 @@
 # Windows upgrade guidance
 
-Status: in progress — implementation and verification are complete; the remaining step is to record the reviewable work-unit commit.
+Status: complete — Windows manual-upgrade guidance is implemented, independently verified, and committed in reviewable work units.
 
 ## Goal
 
@@ -30,7 +30,13 @@ Make `vcsentinel upgrade` truthful and safe on Windows. The running executable m
 1. [x] Add the Windows manual-upgrade command renderer and fail-fast production path without changing Linux release upgrades.
 2. [x] Add unit and public E2E coverage for the recommendation, target path, no-side-effect behavior, and preserved lifecycle cleanup.
 3. [x] Update command help and setup/upgrade task documentation, retaining the distinction between source-based manual upgrade and release-asset upgrades.
-4. [ ] Run independent verification, slice the work into local commits, and leave push as a separate user decision.
+4. [x] Run independent verification, slice the work into local commits, and leave push as a separate user decision.
+
+## Delivery evidence
+
+- Work-unit commits: `5418f88`, `6a8321d`, and `b7ea177`.
+- Verification: focused setup and CLI E2Es, `go test ./...`, `go vet ./...`, `go build ./...`, targeted race tests, Windows-target vet/test compilation, `git diff --check`, and `vcsentinel check` passed.
+- Native Windows execution was not available on the Linux host; the Windows process behavior is covered by the public test branch and cross-target compilation. No real `go install`, system installation path, GitHub request, user HOME/PATH, sudo, or live hook was used.
 
 ## Non-goals
 
