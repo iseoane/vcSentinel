@@ -203,3 +203,40 @@ func TestLocateCurrentBinary(t *testing.T) {
 		t.Errorf("the returned path does not exist: %v", err)
 	}
 }
+
+func TestRenderWindowsManualUpgradeCommand(t *testing.T) {
+	tests := []struct {
+		name        string
+		installRoot string
+		want        string
+	}{
+		{
+			name:        "resolved install root",
+			installRoot: `C:\Users\Alice\.vcsentinel\bin`,
+			want:        `$env:GOBIN = 'C:\Users\Alice\.vcsentinel\bin'`,
+		},
+		{
+			name:        "apostrophe in install root",
+			installRoot: `C:\Users\O'Brien\.vcsentinel\bin`,
+			want:        `$env:GOBIN = 'C:\Users\O''Brien\.vcsentinel\bin'`,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := renderWindowsManualUpgradeCommand(testCase.installRoot)
+			if !strings.Contains(got, "$previousGOBIN = $env:GOBIN") {
+				t.Fatalf("command does not save the caller's GOBIN: %q", got)
+			}
+			if !strings.Contains(got, testCase.want) {
+				t.Fatalf("command = %q, want install-root assignment %q", got, testCase.want)
+			}
+			if !strings.Contains(got, "go install github.com/ISeoane-Quental/vcSentinel/cmd/vcsentinel@latest") {
+				t.Fatalf("command = %q, want source-based go install", got)
+			}
+			if !strings.Contains(got, "finally") || !strings.Contains(got, "Remove-Item Env:GOBIN") || !strings.Contains(got, "$env:GOBIN = $previousGOBIN") {
+				t.Fatalf("command = %q, want GOBIN restoration", got)
+			}
+		})
+	}
+}

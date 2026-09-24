@@ -9,10 +9,16 @@ import (
 	"strings"
 )
 
+const windowsManualUpgradePackage = "github.com/ISeoane-Quental/vcSentinel/cmd/vcsentinel@latest"
+
 func RunUpgradeFromGitHub() error {
 	if err := validateSetupTestOverrides(); err != nil {
 		return err
 	}
+	if runtime.GOOS == "windows" {
+		return reportWindowsManualUpgrade()
+	}
+
 	fallback, err := fallbackSetting()
 	if err != nil {
 		return err
@@ -92,6 +98,10 @@ func RunUpgradeFromGitHub() error {
 // (for example, a private repository without a token). Builds the latest
 // version with go install and replaces the running binary.
 func UpgradeViaGoInstall() error {
+	if runtime.GOOS == "windows" {
+		return reportWindowsManualUpgrade()
+	}
+
 	fmt.Println("🔄 Download unavailable. Retrying with go install (builds from source)...")
 
 	currentBinary, err := locateCurrentBinary()
@@ -133,6 +143,23 @@ func UpgradeViaGoInstall() error {
 
 	fmt.Println("✅ Updated via go install")
 	return nil
+}
+
+func reportWindowsManualUpgrade() error {
+	installDir, err := installRoot()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("⚠️ Automatic upgrade did not happen: Windows locks the running .exe, so vcSentinel cannot replace itself.")
+	fmt.Println("This is a source-based manual upgrade and requires Go. Run this copy-pastable PowerShell command:")
+	fmt.Println(renderWindowsManualUpgradeCommand(installDir))
+	return fmt.Errorf("automatic upgrade did not happen on Windows: the running .exe is locked and cannot replace itself")
+}
+
+func renderWindowsManualUpgradeCommand(installDir string) string {
+	quotedInstallDir := "'" + strings.ReplaceAll(installDir, "'", "''") + "'"
+	return fmt.Sprintf("$previousGOBIN = $env:GOBIN; try { $env:GOBIN = %s; go install %s } finally { if ($null -eq $previousGOBIN) { Remove-Item Env:GOBIN -ErrorAction SilentlyContinue } else { $env:GOBIN = $previousGOBIN } }", quotedInstallDir, windowsManualUpgradePackage)
 }
 
 func upgradeTempPattern() string {

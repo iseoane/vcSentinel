@@ -124,6 +124,13 @@ Example:
 	"upgrade": `Purpose: replace the globally installed vcSentinel program with the
 latest published release.
 
+On Windows, the running .exe is locked and cannot replace itself. Automatic
+upgrade therefore exits non-zero without contacting GitHub or changing the
+installation. It prints a copy-pastable PowerShell command that temporarily
+sets GOBIN to the vcSentinel install root and runs the source-based command
+'go install github.com/ISeoane-Quental/vcSentinel/cmd/vcsentinel@latest'. This
+manual path requires Go and restores the caller's previous GOBIN value.
+
 Upgrade changes the user-level installation only. It does not change any
 repository's project settings, skill, guidance, or hook.
 

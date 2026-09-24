@@ -286,6 +286,10 @@ func assertDirectoryContainsOnly(t *testing.T, directory string, expected ...str
 }
 
 func TestUpgradeRejectsInvalidDownloadedBinaryBeforeReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows upgrade intentionally does not download release artifacts; the manual recommendation is covered by the public CLI E2E")
+	}
+
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatalf("could not locate the test executable: %v", err)
