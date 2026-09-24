@@ -339,6 +339,7 @@ func TestCLIPublicPRCreateE2E(t *testing.T) {
 	if len(strings.TrimSpace(string(evidenceBytes))) == 0 {
 		t.Fatalf("generated public PR evidence %q is empty", evidencePath)
 	}
+	firstReceipt := string(evidenceBytes)
 
 	// Only the evidence emitted by the real review subprocess may enter the
 	// evidence commit. The review itself must not move HEAD or invoke gh.
@@ -365,8 +366,8 @@ func TestCLIPublicPRCreateE2E(t *testing.T) {
 	assertNoPublication("evidence commit")
 
 	_, secondReport := runReview("second public pr review")
-	if len(secondReport.SHAs) == 0 {
-		t.Fatal("second public pr review returned no reviewed commits")
+	if len(secondReport.SHAs) != 1 || secondReport.SHAs[0] != featureHead {
+		t.Fatalf("second public pr review shas = %v, want exactly semantic feature HEAD %q", secondReport.SHAs, featureHead)
 	}
 	if got := cliHead(t, runner); got != evidenceHead {
 		t.Fatalf("second public pr review changed HEAD: got %q, want %q", got, evidenceHead)
@@ -381,6 +382,13 @@ func TestCLIPublicPRCreateE2E(t *testing.T) {
 		if len(lines) != 1 || len(lines[0]) < 3 || lines[0][0] != 'M' || lines[0][1] != ' ' || filepath.Clean(filepath.FromSlash(strings.TrimSpace(lines[0][2:]))) != filepath.Clean(filepath.FromSlash(evidencePath)) {
 			t.Fatalf("second public pr review changed unintended paths: %q; expected only %q", secondStatus, evidencePath)
 		}
+	}
+	secondReceiptBytes, err := os.ReadFile(filepath.Join(runner.repository, filepath.FromSlash(evidencePath)))
+	if err != nil {
+		t.Fatalf("read generated public PR receipt after re-review %q: %v", evidencePath, err)
+	}
+	if string(secondReceiptBytes) != firstReceipt {
+		t.Fatalf("public PR evidence receipt changed after the evidence-only commit:\nfirst: %q\nsecond: %q", firstReceipt, secondReceiptBytes)
 	}
 
 	title := strings.TrimSpace(runner.mustGit("show", "-s", "--format=%s", featureHead).Stdout)
