@@ -14,19 +14,21 @@ import (
 )
 
 type setupReleaseFixture struct {
-	mu            sync.RWMutex
-	releaseStatus int
-	releaseBody   []byte
-	assetStatus   int
-	assetBody     []byte
+	mu              sync.RWMutex
+	releaseStatus   int
+	releaseBody     []byte
+	releaseRequests int
+	assetStatus     int
+	assetBody       []byte
 }
 
 func (f *setupReleaseFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	switch r.URL.Path {
 	case "/release":
+		f.releaseRequests++
 		if f.releaseStatus >= http.StatusBadRequest {
 			http.Error(w, "release fixture failure", f.releaseStatus)
 			return
@@ -53,6 +55,12 @@ func (f *setupReleaseFixture) setRelease(body []byte, status int, asset []byte, 
 	f.releaseStatus = status
 	f.assetBody = append([]byte(nil), asset...)
 	f.assetStatus = assetStatus
+}
+
+func (f *setupReleaseFixture) releaseRequestCount() int {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.releaseRequests
 }
 
 func setupReleaseBody(t *testing.T, tag, assetName, assetURL string, includeAsset bool) []byte {
@@ -195,11 +203,21 @@ func TestCLIPublicSetupLifecycleE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install did not create the global configuration: %v", err)
 	}
-	shellAfterInstall, err := os.ReadFile(shellPath)
-	if err != nil {
-		t.Fatalf("read shell file after install: %v", err)
+	var shellAfterInstall []byte
+	if runtime.GOOS != "windows" {
+		shellAfterInstall, err = os.ReadFile(shellPath)
+		if err != nil {
+			t.Fatalf("read shell file after install: %v", err)
+		}
 	}
 	assertSetupPathEffect(t, installRoot, shellAfterInstall, pathFile, initialPath)
+	var pathAfterInstall []byte
+	if runtime.GOOS == "windows" {
+		pathAfterInstall, err = os.ReadFile(pathFile)
+		if err != nil {
+			t.Fatalf("read Windows PATH after install: %v", err)
+		}
+	}
 
 	installAgain := setupRunner.run("install")
 	if installAgain.ExitCode != 0 {
@@ -213,12 +231,14 @@ func TestCLIPublicSetupLifecycleE2E(t *testing.T) {
 	if string(configAfterInstall) != string(configBefore) {
 		t.Fatal("repeated install overwrote the existing configuration")
 	}
-	shellAfterRepeat, err := os.ReadFile(shellPath)
-	if err != nil {
-		t.Fatalf("read shell file after repeated install: %v", err)
-	}
-	if string(shellAfterRepeat) != string(shellAfterInstall) {
-		t.Fatal("repeated install duplicated or changed the PATH block")
+	if runtime.GOOS != "windows" {
+		shellAfterRepeat, err := os.ReadFile(shellPath)
+		if err != nil {
+			t.Fatalf("read shell file after repeated install: %v", err)
+		}
+		if string(shellAfterRepeat) != string(shellAfterInstall) {
+			t.Fatal("repeated install duplicated or changed the PATH block")
+		}
 	}
 
 	fixture.setRelease(
@@ -227,8 +247,41 @@ func TestCLIPublicSetupLifecycleE2E(t *testing.T) {
 		upgradedAsset,
 		http.StatusOK,
 	)
+	releaseRequestsBeforeUpgrade := fixture.releaseRequestCount()
 	if runtime.GOOS == "windows" {
-		t.Log("Windows cannot safely replace the executable that is currently running; upgrade remains covered by setup package tests and the Linux public process flow")
+		upgrade := setupRunner.runInDir(installedBinary, runner.repository, "upgrade")
+		if upgrade.ExitCode == 0 {
+			t.Fatalf("Windows public upgrade unexpectedly succeeded:\n%s", upgrade.Diagnostic())
+		}
+		diagnostic := upgrade.Stdout + "\n" + upgrade.Stderr
+		for _, expected := range []string{
+			"running .exe is locked",
+			"source-based manual upgrade and requires Go",
+			"go install github.com/ISeoane-Quental/vcSentinel/cmd/vcsentinel@latest",
+			installRoot,
+		} {
+			if !strings.Contains(diagnostic, expected) {
+				t.Fatalf("Windows upgrade diagnostic = %q, want %q", diagnostic, expected)
+			}
+		}
+		if got := fixture.releaseRequestCount(); got != releaseRequestsBeforeUpgrade {
+			t.Fatalf("Windows upgrade performed a release lookup: requests before=%d after=%d", releaseRequestsBeforeUpgrade, got)
+		}
+		assertExecutableVersion(t, setupRunner, installedBinary, "e2e-installed")
+		configAfterUpgrade, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("read configuration after Windows upgrade: %v", err)
+		}
+		if string(configAfterUpgrade) != string(configBefore) {
+			t.Fatal("Windows upgrade changed the global configuration")
+		}
+		pathAfterUpgrade, err := os.ReadFile(pathFile)
+		if err != nil {
+			t.Fatalf("read Windows PATH after upgrade: %v", err)
+		}
+		if string(pathAfterUpgrade) != string(pathAfterInstall) {
+			t.Fatal("Windows upgrade changed the user PATH")
+		}
 	} else {
 		upgrade := setupRunner.runInDir(installedBinary, runner.repository, "upgrade")
 		if upgrade.ExitCode != 0 {
@@ -251,6 +304,8 @@ func TestCLIPublicSetupLifecycleE2E(t *testing.T) {
 		}
 	}
 
+	// Windows uninstall is launched by the disposable driver binary, not by
+	// the installed executable that would be locked while it is running.
 	uninstall := setupRunner.run("uninstall")
 	if uninstall.ExitCode != 0 {
 		t.Fatalf("public uninstall failed:\n%s", uninstall.Diagnostic())
