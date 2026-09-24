@@ -1,6 +1,6 @@
 # PR evidence convergence
 
-Status: in progress — the public review/evidence/review/create reproducer is red until the evidence contract is corrected.
+Status: complete — the public review/evidence/review/create workflow converges in two rounds with exact evidence validation intact.
 
 ## Goal
 
@@ -8,7 +8,7 @@ Make the documented `pr review → commit evidence → re-review → pr create` 
 
 ## Confirmed failure
 
-The black-box `internal/cli_e2e/TestCLIPublicPRCreateE2E` runs the real public binary, commits exactly the first generated `.vcsentinel/evidence` file, runs public `pr review` again, and then invokes `pr create`. The second review rewrites the evidence because the publication body embeds the current branch/head attestation. `pr create` exits 1 with `The pr review evidence is not committed: .vcsentinel/evidence/.../pr-review.log`; fake `gh` is not invoked.
+The black-box `internal/cli_e2e/TestCLIPublicPRCreateE2E` reproduced the failure with the real public binary: after committing the first generated `.vcsentinel/evidence` file, the second review rewrote it because the publication body embeds the current branch/head attestation. `pr create` exited 1 with `The pr review evidence is not committed: .vcsentinel/evidence/.../pr-review.log`; fake `gh` was not invoked. The reproducer is now green after separating the receipt from the body.
 
 ## Contract decision
 
@@ -24,6 +24,8 @@ Keep `PRReviewEntry.HeadSHA`, body attestation validation, and `EvidenceAtHEAD` 
 6. Update the governing piece-4/piece-5 documentation to describe semantic range, generated evidence commits, and receipt versus publication body.
 7. Run focused review tests, the CLI E2E package, full Go tests, vet, build, race checks, and diff checks; record any unrelated failures separately.
 
+All seven tasks completed. `go test ./...`, `go vet ./...`, `go build ./...`, `go test -race ./...`, and `git diff --check` pass after the committed fix. Four reviewable commits were created by the approved slice plan: `401e597`, `fb64de7`, `a79651d`, and `3cfdb7c`. `internal/cli_e2e/TestCLIPublicPRCreateE2E` passes and the worktree is clean.
+
 ## Acceptance
 
 - The existing black-box convergence reproducer passes and fake `gh` receives the composed body.
@@ -32,6 +34,10 @@ Keep `PRReviewEntry.HeadSHA`, body attestation validation, and `EvidenceAtHEAD` 
 - Editing or staging evidence after review still fails exact evidence validation.
 - No network, real GitHub, system installation path, or real agent is used by tests.
 - Production changes and tests remain in reviewable work units; no delivery action is implied.
+
+## Closure
+
+The slice planner also exposed a diff accounting defect when `numstat` used a different diff shape from hunk parsing. `internal/git/draft.go` now uses `--unified=0` for tracked numstat calculation so plan validation is deterministic; the fix is included in `401e597`.
 
 ## Non-goals
 
