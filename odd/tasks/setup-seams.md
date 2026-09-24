@@ -1,6 +1,6 @@
 # Safe setup seams and public E2E coverage
 
-Status: in progress — setup seams and public lifecycle verification are complete; the remaining task is to record the reviewable work-unit commit.
+Status: complete — setup seams and public lifecycle verification are complete in reviewable work-unit commits.
 
 ## Goal
 
@@ -41,7 +41,13 @@ Upgrade verification must fail safely: verify the downloaded staged binary befor
 2. [x] Harden upgrade verification/rollback before replacement; add focused invalid-binary and cleanup tests.
 3. [x] Add public black-box install → upgrade → uninstall E2Es with release/download fixtures, side-effect assertions, idempotency, and release-path failure coverage.
 4. [x] Update the CLI E2E coverage contract and setup hardening notes with the new seam and remaining platform limitations.
-5. [ ] Run focused and full verification, then close this task in reviewable commits without pushing.
+5. [x] Run focused and full verification, then close this task in reviewable commits without pushing.
+
+## Delivery evidence
+
+- Work-unit commits: `f2022e9`, `647d002`, and `d373801`.
+- Verification: focused setup tests, public setup E2Es, full `go test ./...`, `go vet ./...`, `go build ./...`, targeted race tests, `git diff --check`, and `vcsentinel check` passed.
+- Native Windows self-upgrade remains explicitly unclaimed because a running executable cannot replace itself; no real installation path, GitHub endpoint, HOME, PATH, `go install`, sudo, or live hook was used.
 
 ## Non-goals
 
