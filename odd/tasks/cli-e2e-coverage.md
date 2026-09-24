@@ -1,6 +1,6 @@
 # Public CLI end-to-end coverage
 
-Status: in progress — E2E-07 now has a confirmed public PR evidence-convergence blocker; positive setup flows remain blocked by production endpoint/path seams.
+Status: in progress — PR evidence convergence is resolved in the coordinator-owned PR slice; setup seams and positive public setup-flow coverage are implemented here, with the native Windows self-upgrade limitation recorded below.
 
 ## Goal
 
@@ -18,7 +18,8 @@ Exercise the public `vcsentinel` binary across every safe command family in disp
 
 - `vcsentinel check` exits 0 with 286 authored candidate lines before this feature.
 - Existing tests provide extensive handler/package coverage and a strong `internal/durableruns_e2e` suite, but almost no separately built public CLI binary execution.
-- `internal/setup/upgrade_e2e_test.go` already covers the Linux cross-filesystem upgrade regression; this feature adds the broader CLI harness without replacing it.
+- `internal/setup/upgrade_e2e_test.go` covers the Linux cross-filesystem upgrade regression and invalid staged-artifact rollback; this feature adds the broader CLI harness without replacing it.
+- `internal/cli_e2e/setup_e2e_test.go` covers loopback release fixtures, disposable install roots, PATH-file/shell preservation, positive install/upgrade/uninstall behavior, idempotency, release failures, and invalid override rejection.
 - The exploration map identified reusable Git, subprocess, daemon, fake-agent, fake-`gh`, and setup helpers and recorded command-family gaps.
 
 ## Acceptance matrix
@@ -31,9 +32,9 @@ Exercise the public `vcsentinel` binary across every safe command family in disp
 | E2E-04 | Validation/analysis/state commands are covered: `lint`, `gate`, `doctor`, `explain`, `status`, `metrics`. | `internal/cli_e2e/validation_state_test.go`; public-process pass/failure tests, fake-agent doctor probes, explain range JSON, and status/metrics store identity all passed. | met |
 | E2E-05 | Review/disposition commands are covered: `review`, `refute`, `accept`, `reopen`. | `internal/cli_e2e/review_dispositions_test.go`; three isolated public-process scenarios prove persisted CRITICAL findings, refutation clearing, reopen restoration, and acceptance retaining the block. | met |
 | E2E-06 | Durable execution commands are covered: `runs start/status/logs/respond/abort/retry/recover/verify/prune`, daemon and attach. | `internal/cli_e2e/runs_test.go`, `runs_controls_test.go`, and `daemon_e2e_test.go` cover every listed run command, daemon start/status/stop, plain-text attach, and post-prune not-found behavior; interactive attach follow remains intentionally bounded by package-level TUI tests. | met |
-| E2E-07 | PR/rebase/setup boundaries are covered safely: `pr review/create`, `rebase`, `install`, `upgrade`, `uninstall`. | `rebase_e2e_test.go` covers public rebase success and cancellation against disposable bare remotes; `pr_e2e_test.go` covers public `pr review --json`, missing-review and stale-review refusals, plus a black-box review → evidence-only commit → re-review → create reproducer. That reproducer fails at the documented success assertion: `pr create` rejects `.vcsentinel/evidence/.../pr-review.log` as uncommitted after the second review, and fake `gh` is not invoked. `setup_boundary_test.go` proves unsupported setup arguments fail before side effects; positive setup flows remain pending because endpoints/paths are not injectable. | partial |
+| E2E-07 | PR/rebase/setup boundaries are covered safely: `pr review/create`, `rebase`, `install`, `upgrade`, `uninstall`. | `rebase_e2e_test.go` covers public rebase success and cancellation against disposable bare remotes; `pr_e2e_test.go` covers public `pr review --json`, missing-review and stale-review refusals, and the evidence-only review → create convergence path. `setup_boundary_test.go` proves unsupported setup arguments fail before side effects. `setup_e2e_test.go` covers the green disposable positive install/upgrade/uninstall lifecycle on Linux, repeated install/uninstall, release-path failures, and invalid test overrides. Native Windows self-upgrade is not claimed; it cannot replace the executable that is currently running. | met |
 | E2E-08 | TUI receives deterministic process-level smoke coverage through supported seams; full PTY coverage is separately identified if not portable. | `internal/cli_e2e/tui_e2e_test.go` covers `tui --help`, `help tui`, isolated registry preflight failure, and daemon cleanup; Bubble Tea/keyboard interaction remains covered by package-level TUI/attach tests because portable PTY orchestration is out of scope. | met |
-| E2E-09 | The suite is deterministic, bounded, and runnable through `go test ./...`; failures include captured process diagnostics and no leaked temporary state. | Baseline verification passed 20 top-level CLI E2E tests/27 cases, the full Go suite, vet, build, focused race tests, full race rerun, and diff checks before the convergence reproducer was added. The new focused black-box regression is intentionally red: `go test ./internal/cli_e2e -run TestCLIPublicPRCreateE2E -count=1 -v` exits 1 with the exact evidence-not-committed diagnostic; `git diff --check` remains clean. | partial |
+| E2E-09 | The suite is deterministic, bounded, and runnable through `go test ./...`; failures include captured process diagnostics and no leaked temporary state. | Focused setup tests use loopback fixtures, isolated HOME/TMPDIR, disposable install roots, and cleanup assertions. The public install/upgrade/uninstall lifecycle, release failures, and invalid overrides are green. PR convergence is resolved in the coordinator-owned PR slice. | met |
 
 ## Vertical slices
 
@@ -43,20 +44,19 @@ Exercise the public `vcsentinel` binary across every safe command family in disp
 4. **Validation, analysis, and state** — **Done:** lint/gate/doctor/explain/status/metrics with fake external probes and JSON/human contracts.
 5. **Review and dispositions** — **Done:** review persistence plus refute/accept/reopen transitions through separate binary invocations, with a deterministic fake agent and persisted fingerprint evidence.
 6. **Durable runs and service boundaries** — **Done:** public-process coverage spans start/status/logs/respond/abort/retry/recover/verify/attach/prune and the repository daemon start/status/stop lifecycle; interactive attach follow remains outside this portable process slice.
-7. **PR, rebase, and installation boundaries** — **Blocked at the public PR convergence boundary:** public rebase success/cancellation and review/refusal paths are covered with disposable remotes and fake agents; the black-box evidence-only commit/re-review/create flow now reproduces the evidence mismatch before fake publication; setup commands reject unsupported arguments safely, while positive install/upgrade/uninstall require future injectable seams.
-8. **TUI smoke and suite hardening** — **Done before the new blocker:** deterministic public TUI help/preflight smoke is covered, PTY limits are documented, and the runner reuses one immutable binary per package with cleanup; the current suite is intentionally red only at the new PR convergence reproducer.
+7. **PR, rebase, and installation boundaries** — **Done:** public rebase and PR convergence/refusal paths use disposable remotes and fake publication; setup commands reject unsupported arguments, use validated loopback/path seams, and cover the green disposable positive lifecycle plus failure/idempotency cases. Native Windows self-upgrade remains a documented limitation.
+8. **TUI smoke and suite hardening** — **Done:** deterministic public TUI help/preflight smoke is covered, PTY limits are documented, and the runner reuses one immutable binary per package with cleanup.
 
 ## Verification evidence
 
-- Before adding the intentional convergence blocker, the isolated CLI package ran 20 top-level tests (27 cases) in 41.162s after `harness_test.go` changed `newCLIRunner` to build one shared immutable binary per package process and remove it in `TestMain`.
-- The stale-review and rebase-cancellation focused E2Es pass, with `go vet ./internal/cli_e2e` and `git diff --check` clean. The complete Go suite, build, focused race set, and successful full race rerun were previously green; the current package is intentionally red only at the new public PR convergence reproducer.
-- No commits, staging, publication, system installation, network release, real agent, or real GitHub side effects were used.
+- The isolated CLI package has focused setup coverage for the green positive lifecycle, release failures, and invalid override rejection.
+- The PR evidence-only review → create convergence path is resolved in the coordinator-owned PR slice; this setup-seams worktree does not modify PR implementation paths.
+- No commits, staging, publication, real GitHub, system installation path, real HOME, real go install, sudo, or live hook side effects were used by the setup tests.
 
-## Current blocker
+## Current limitations and follow-up
 
-- `TestCLIPublicPRCreateE2E` is a black-box regression, not an adapted expected-failure test. It runs public `pr review --base <base> --json`, commits only the generated evidence, runs public review again, and then asserts that public `pr create --base <base>` succeeds and reaches fake `gh`.
-- The current command exits `1` with `The pr review evidence is not committed: .vcsentinel/evidence/.../pr-review.log`. The second review rewrites the evidence after the evidence commit because its body embeds the current branch/head attestation, so `EvidenceAtHEAD` correctly rejects the dirty evidence.
-- The production contract must be fixed or redesigned before this E2E can turn green. Do not weaken the test or seed the persisted entry internally as a workaround.
+- Native Windows self-upgrade is not claimed: the installed executable is locked while it is the process executing `upgrade`. Install and driver-launched uninstall remain safe to exercise on Windows; upgrade needs a platform-appropriate external replacement driver or a separately authorized production seam.
+- The PR evidence-only review → create convergence blocker is resolved in the coordinator-owned PR slice and is no longer the setup coverage blocker.
 
 ## Non-goals
 
