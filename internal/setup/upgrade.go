@@ -37,7 +37,7 @@ func RunUpgradeFromGitHub() error {
 
 	fmt.Printf("⬇️ Downloading %s...\n", release.TagName)
 
-	tmpFile, err := os.CreateTemp("", "vcsentinel-upgrade-*")
+	tmpFile, err := os.CreateTemp(filepath.Dir(currentBinary), "vcsentinel-upgrade-*")
 	if err != nil {
 		return fmt.Errorf("could not create the temporary download file: %w", err)
 	}
