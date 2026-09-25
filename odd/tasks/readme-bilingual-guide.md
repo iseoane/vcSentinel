@@ -14,8 +14,8 @@ Replace the deleted root README with a current English onboarding guide and an e
 - Delivery strategy: single reviewable documentation commit; HTML diagram remains unchanged.
 
 ## Tasks
-- [x] R1: Write the English guide and Castilian Spanish translation, with truthful badges, prerequisites, installation/upgrade, optional CodeGraph, multi-commit-to-PR example, configuration and cross-links. Check: independent verifier passed; both docs exist and match current CLI behavior. Commit: pending with R2.
-- [ ] R2: Verify links, commands and language consistency, then commit the complete documentation work unit on this feature branch. Check: focused checks and clean committed diff; record commit identity. Commit: pending.
+- [x] R1: Write the English guide and Castilian Spanish translation, with truthful badges, prerequisites, installation/upgrade, optional CodeGraph, multi-commit-to-PR example, configuration and cross-links. Check: independent verifier passed; both docs exist and match current CLI behavior. Commit: `0254bf8`.
+- [x] R2: Verify links, commands and language consistency, then commit the complete documentation work unit on this feature branch. Check: local links and `git diff --check` passed; record commit identity. Commit: `0254bf8`.
 
 ## Acceptance
 - README.md links to README.es.md and vice versa.
@@ -30,7 +30,8 @@ Replace the deleted root README with a current English onboarding guide and an e
 - Independent read-only verifier passed badge, CLI, CodeGraph, configuration, PR behavior and Spanish fidelity; external badge availability not fetched.
 - Native risk assessment was unassessable because untracked files require declaration; independent verifier ran per returned high-risk fallback plan.
 - Parent spot check: local Markdown links in both documents resolve (9 each), `git diff --check` passes; no visual inspection (Chrome unavailable).
-- R2 in progress.
+- R2 complete: verified 9 local Markdown links in each README and `git diff --check`; committed the documentation work unit as `0254bf8` (`docs(readme): explain vcSentinel in English and Spanish`).
+- Previous main CI failures in `internal/execution` were observed before the README commit; CI for this commit remains pending publication.
 
 ## Next step
-Commit the verified documentation work unit and record its identity.
+Publish the documentation commit and observe the CI run; treat an unrelated code failure as separate scope.
