@@ -3,18 +3,12 @@ package main
 import (
 	"fmt"
 	"io"
-	"math"
-	"time"
 
-	"github.com/ISeoane-Quental/vcSentinel/internal/agentadapter"
 	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 	"github.com/ISeoane-Quental/vcSentinel/internal/gate"
 	"github.com/ISeoane-Quental/vcSentinel/internal/git"
 	"github.com/ISeoane-Quental/vcSentinel/internal/graph"
-	"github.com/ISeoane-Quental/vcSentinel/internal/modelprobe"
 	"github.com/ISeoane-Quental/vcSentinel/internal/ops"
-	"github.com/ISeoane-Quental/vcSentinel/internal/review"
-	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vcSentinel/internal/secret"
 	"github.com/ISeoane-Quental/vcSentinel/internal/validation"
 )
@@ -39,7 +33,7 @@ const defaultGateProfile = "standard"
 // runGate parses --stage/--profile, loads the STRICT config (the entry point
 // where an unknown key in the yml stops being discarded silently, requirement
 // added by the orchestrator for F1's exit criterion #4) and delegates to
-// internal/gate the fixed order validation → semantic review of HEAD. It
+// internal/gate to run deterministic validation against HEAD. It
 // returns the exit code without calling os.Exit (same pattern as
 // runSlicePlan/runSliceApply) so it can be tested without ending the
 // process.
@@ -101,8 +95,7 @@ func runGate(w io.Writer, worktree string, args []string) int {
 
 // buildGateOptions assembles the gate.Options the command hands to
 // internal/gate: validation profile, HEAD-derived revision inputs, the real
-// reviewer seams, and the per-commit review transport (nil unless
-// review.durable_routes is on). Shared by runGate and the cutover tests,
+// validation and durable-run inputs. Shared by runGate and the cutover tests,
 // so tests exercise the exact production construction.
 // GateEvidence groups what the gate derives from HEAD. It kept six fields
 // while the gate audited; piece 3 left two, because the rest fed the review
@@ -125,27 +118,6 @@ func buildGateOptions(cfg config.Config, worktree, profile string, evidence Gate
 				return graph.NewNativeProvider(snapshot, treeOID)
 			},
 		},
-	}
-}
-
-// gateRefuterFactory resolves the explicit cheap profile separately from the
-// per-dimension auditor so each semantic CRITICAL gets an independent refuter.
-func gateRefuterFactory(cfg config.Config, verifier *modelprobe.Verifier) review.RefuterFactory {
-	return refuterFactory(cfg, verifier)
-}
-
-// gateAuditorFactory builds the agent of each dimension of the
-// semantic review with the contract-selected provider profile, without a
-// review override: gate --profile selects a validation profile only.
-func gateAuditorFactory(cfg config.Config, verifier *modelprobe.Verifier) review.ReviewerFactory {
-	return func(_ review.ReviewBundle, dimension string) (review.AgentReviewer, string, error) {
-		profile := config.ResolveProfile(cfg, reviewcontract.DefaultProfile(dimension), "")
-		adapter, err := agentadapter.NewAdapterWithProfile(cfg, profile)
-		if err != nil {
-			return nil, profile.Name, err
-		}
-		verifier.Verify(profile.Name, profile.Model, adapter)
-		return adapter, profile.Name, nil
 	}
 }
 
@@ -215,27 +187,11 @@ func recordGateEventWithDetails(worktree, stage, state, contextSkipReason string
 	_ = ops.RecordEvent(gitDir, "gate", gate.ExitCode(state), nil, detail, worktree)
 }
 
-// maxTimeoutSeconds is the largest --timeout value time.Duration can
-// represent. Without this ceiling a positive, perfectly parseable value
-// overflows when multiplied by time.Second and becomes a negative duration,
-// so the override would be accepted without representing what was asked.
-//
-// It is int64 and not int on purpose: the value does not fit in a 32-bit int,
-// and declaring it that way used to make the whole package FAIL TO COMPILE on
-// those targets even though time.Duration stayed int64 and could represent
-// it. On 32 bits the check turns out to be unreachable —the maximum of an int
-// is smaller— and that is correct: there no parseable value can overflow.
-const maxTimeoutSeconds int64 = math.MaxInt64 / int64(time.Second)
-
 // parseGateFlags extracts --stage (required, fixed values), --profile
 // (optional, defaultGateProfile if omitted) and --timeout (optional).
 //
-// --timeout has exactly the same semantics as in review: it overrides
-// review.timeout ONLY in this invocation. The gate runs the same semantic
-// review, so denying it the lever forced editing the yml —a global,
-// persistent change— for one particular large candidate. Widening the budget
-// weakens no gate: a review that was going to block still blocks, it just
-// gets to finish.
+// --timeout is rejected because the gate now runs deterministic validation
+// only; the flag previously extended the retired semantic-review budget.
 func parseGateFlags(args []string) (stage, profile string, err error) {
 	profile = defaultGateProfile
 	for i := 0; i < len(args); i++ {
