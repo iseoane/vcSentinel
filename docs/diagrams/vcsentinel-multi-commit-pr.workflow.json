@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "vcSentinel: Multi-Commit Development to Pull Request",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 760]
+  },
+  "lanes": [
+    { "id": "developer", "label": "Developer" },
+    { "id": "guardian", "label": "vcSentinel" },
+    { "id": "review", "label": "Review + Validation" },
+    { "id": "github", "label": "GitHub" },
+    { "id": "decision", "label": "Human Decision", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "setup", "label": "Set up", "fromCol": 0, "toCol": 0 },
+    { "id": "develop", "label": "Build reviewable commits", "fromCol": 1, "toCol": 4, "variant": "emphasis" },
+    { "id": "publish", "label": "Publish PR", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "commit_cycle", "label": "Repeat this stage for every work unit", "lane": "guardian", "fromCol": 2, "toCol": 4, "variant": "emphasis" }
+  ],
+  "mainPath": [
+    "initialize",
+    "implement",
+    "measure",
+    "plan_slice",
+    "apply_commit",
+    "audit_commit",
+    "author_pr",
+    "publish_pr"
+  ],
+  "nodes": [
+    { "id": "initialize", "lane": "guardian", "col": 0, "type": "backend", "label": "Initialize", "sublabel": "vcsentinel init", "tag": "config + hook" },
+    { "id": "implement", "lane": "developer", "col": 1, "type": "frontend", "label": "Work Unit", "sublabel": "code + tests + docs" },
+    { "id": "measure", "lane": "guardian", "col": 2, "type": "security", "label": "Measure", "sublabel": "vcsentinel check", "tag": "advisory" },
+    { "id": "plan_slice", "lane": "guardian", "col": 3, "type": "backend", "label": "Plan", "sublabel": "slice plan", "width": 60 },
+    { "id": "approve_plan", "lane": "decision", "col": 3, "type": "security", "label": "Decide", "sublabel": "bypass or abort", "tag": "human-owned" },
+    { "id": "apply_commit", "lane": "developer", "col": 4, "type": "messagebus", "label": "Commit", "sublabel": "slice apply", "tag": "≤ 400 lines", "width": 60 },
+    { "id": "audit_commit", "lane": "review", "col": 4, "type": "security", "label": "Audit", "sublabel": "review <sha>", "tag": "6 dimensions" },
+    { "id": "author_pr", "lane": "review", "col": 5, "type": "database", "label": "PR Evidence", "sublabel": "gate + pr review", "tag": "persisted" },
+    { "id": "publish_pr", "lane": "github", "col": 5, "type": "cloud", "label": "Pull Request", "sublabel": "pr create", "tag": "head-bound" }
+  ],
+  "edges": [
+    { "from": "initialize", "to": "implement", "role": "main" },
+    { "from": "implement", "to": "measure", "role": "main" },
+    { "from": "measure", "to": "plan_slice", "variant": "emphasis", "role": "main" },
+    { "from": "plan_slice", "to": "approve_plan", "label": "pending choice", "labelDx": -90, "variant": "security", "role": "branch", "route": "drop", "fromSide": "bottom", "toSide": "top" },
+    { "from": "plan_slice", "to": "apply_commit", "role": "main" },
+    { "from": "apply_commit", "to": "audit_commit", "variant": "emphasis", "role": "main", "route": "drop", "fromSide": "bottom", "toSide": "top" },
+    { "from": "audit_commit", "to": "author_pr", "variant": "emphasis", "role": "main" },
+    { "from": "author_pr", "to": "publish_pr", "variant": "emphasis", "role": "main", "route": "drop", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Repeat per Commit",
+      "items": [
+        "Implement one cohesive work unit, then measure the worktree",
+        "Plan and apply reviewable slices instead of one oversized commit",
+        "Audit each resulting commit before preparing the pull request"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Human Control",
+      "items": [
+        "vcSentinel never chooses a massive-file bypass for the user",
+        "The staged pre-commit hook enforces the 400-line candidate boundary",
+        "Publishing and merging remain explicit human decisions"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "PR Readiness",
+      "items": [
+        "gate --stage pr provides deterministic validation evidence",
+        "pr review persists branch judgement without publishing",
+        "pr create requires matching head and committed evidence"
+      ]
+    }
+  ]
+}
