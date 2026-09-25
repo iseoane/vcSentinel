@@ -222,8 +222,10 @@ check (informativo)
          └─ pr create → validación determinista → publicación con gh o portapapeles
 ```
 
-El [diagrama completo del flujo, redactado en inglés](docs/diagrams/vcsentinel-multi-commit-pr.html)
-explica visualmente esta secuencia.
+El diagrama completo del flujo, redactado en inglés, se publicará en
+[GitHub Pages](https://iseoane.github.io/vcSentinel/vcsentinel-multi-commit-pr.html).
+Si el repositorio se transfiere de nuevo, esta URL específica del propietario
+cambiará y habrá que actualizar el enlace.
 
 `vcsentinel pr review` guarda localmente el juicio de la rama e informa de los
 commits que todavía necesitan un `vcsentinel review` individual; nunca publica.
@@ -250,14 +252,65 @@ vcsentinel pr create --base main --parent feature-a --chain-pr
 
 ## Revisión semántica, validación y publicación
 
-Los comandos tienen responsabilidades distintas:
+Estas etapas responden a preguntas distintas y están separadas a propósito.
 
-| Etapa | Comando | Lo que no hace |
-|---|---|---|
-| Revisión semántica por commit | `vcsentinel review <sha> [--dims ...] [--gate]` | No ejecuta el perfil de validación determinista salvo que se invoque otro comando. |
-| Validación determinista | `vcsentinel gate --stage pre-commit\|pre-push\|pr [--profile X]` | No audita la calidad del código ni usa un agente. |
-| Juicio de la rama | `vcsentinel pr review --base main` | No publica ni audita por ti los commits que falten. |
-| Publicación | `vcsentinel pr create --base main` | No redacta ni repite la revisión semántica; consume la entrada guardada de la rama. |
+### Revisión semántica por commit
+
+`vcsentinel review <sha> [--dims ...]` comprueba el comportamiento y la
+intención del commit según seis contratos de dimensión:
+
+- **`logic`** — condiciones, gestión de errores, casos límite y efectos
+  secundarios.
+- **`style`** — nombres, código idiomático, claridad y convenciones del
+  repositorio.
+- **`design`** — estructura, acoplamiento, cohesión y dependencias orientadas al
+  dominio.
+- **`tests`** — cobertura significativa, determinismo y si las pruebas
+  demuestran un cambio de comportamiento real.
+- **`security`** — límites de privilegio, entradas no confiables y datos
+  expuestos.
+- **`spec`** — si el diff hace lo que afirma el commit, sin trabajo fuera de
+  alcance ni afirmaciones sin respaldo.
+
+Sin `--dims`, vcSentinel deriva un plan según el riesgo; **no ejecuta las seis
+dimensiones en cada commit**. El plan automático excluye deliberadamente
+`style`, porque esa comprobación corresponde al lint determinista. Usa
+`--dims logic,style,design,tests,security,spec` cuando necesites seleccionar
+explícitamente las dimensiones; las dimensiones indicadas sustituyen el plan
+derivado. `--gate` añade el fallo ante un resultado crítico de la revisión; no
+sustituye al gate determinista.
+
+### Validación determinista
+
+`vcsentinel gate --stage pre-commit|pre-push|pr [--profile X]` ejecuta los
+comandos configurados sin agente ni veredicto semántico. En este proyecto, el
+perfil `standard` predeterminado comprueba estas capacidades: `format`
+(`gofmt -l .`, falla si imprime archivos), `lint` (`go vet ./...`), `build`
+(`go build ./...`) y `unit_test` (`go test ./...`). `--profile` selecciona otro
+perfil de validación con nombre; `--stage` solo registra el punto del ciclo
+(`pre-commit`, `pre-push` o `pr`) y es independiente del perfil.
+
+### Revisión de la rama y publicación
+
+`vcsentinel pr review --base main` audita el diff neto de la rama frente a su
+base y guarda localmente el juicio y las evidencias de la rama. También informa
+de los commits que todavía no tienen un registro individual de
+`vcsentinel review`. Esa lista de pendientes es una distinción importante, no
+una auditoría oculta: `pr review` no revisa silenciosamente esos commits ni
+ejecuta la validación determinista.
+
+La decisión es **una sola PR** hasta 400 líneas modificadas. Por encima de 400,
+la decisión es **PR encadenadas**, salvo que se demuestre coherencia. Añade
+`--overview` para solicitar la comprobación de coherencia de la rama; una rama
+sobredimensionada pero coherente puede mantenerse como una sola PR, mientras
+que una incoherente debería dividirse.
+
+`vcsentinel pr create --base main` consume el juicio guardado para la rama y el
+HEAD actuales, verifica sus evidencias confirmadas y vuelve a ejecutar el
+perfil de validación determinista. No hace una revisión semántica ni redacta
+un veredicto semántico: publica el resultado guardado solo cuando esas
+comprobaciones pasan (o tras un `--force --reason "..."` indicado
+explícitamente por una persona).
 
 `pr create` solo usa GitHub Actions cuando se configura explícitamente
 `ci.workflow`. Un workflow ausente o vacío desactiva sus evidencias; vcSentinel

@@ -209,8 +209,10 @@ check (advisory)
          └─ pr create → deterministic validation → gh publication or clipboard fallback
 ```
 
-The complete English workflow diagram is available at
-[`docs/diagrams/vcsentinel-multi-commit-pr.html`](docs/diagrams/vcsentinel-multi-commit-pr.html).
+The complete English workflow diagram will be published at
+[GitHub Pages](https://iseoane.github.io/vcSentinel/vcsentinel-multi-commit-pr.html).
+If the repository is transferred again, this owner-specific Pages URL will
+change and this link will need updating.
 
 `vcsentinel pr review` saves a branch judgement locally and reports commits
 that still need individual `vcsentinel review`; it never publishes. `pr create`
@@ -236,14 +238,58 @@ vcsentinel pr create --base main --parent feature-a --chain-pr
 
 ## Semantic review, validation, and publication
 
-These commands are intentionally different:
+These stages answer different questions and are deliberately separate.
 
-| Stage | Command | What it does not do |
-|---|---|---|
-| Per-commit semantic review | `vcsentinel review <sha> [--dims ...] [--gate]` | It does not run the deterministic validation profile unless a separate command is used. |
-| Deterministic validation | `vcsentinel gate --stage pre-commit\|pre-push\|pr [--profile X]` | It does not audit code quality or use an agent. |
-| Branch judgement | `vcsentinel pr review --base main` | It does not publish and does not audit missing commits on your behalf. |
-| Publication | `vcsentinel pr create --base main` | It does not author or redo semantic review; it consumes the saved branch entry. |
+### Per-commit semantic review
+
+`vcsentinel review <sha> [--dims ...]` checks the commit's behavior and intent
+against six dimension contracts:
+
+- **`logic`** — conditions, error handling, edge cases, and side effects.
+- **`style`** — naming, idiomatic code, clarity, and repository conventions.
+- **`design`** — structure, coupling, cohesion, and domain-oriented dependencies.
+- **`tests`** — meaningful coverage, determinism, and whether tests imply the
+  behavior change is real.
+- **`security`** — privilege boundaries, untrusted input, and exposed data.
+- **`spec`** — whether the diff does what the commit says, without out-of-scope
+  work or unsupported claims.
+
+Without `--dims`, vcSentinel derives a risk-dependent plan; it does **not** run
+all six dimensions on every commit. The automatic plan intentionally excludes
+`style` because deterministic lint owns that check. Use
+`--dims logic,style,design,tests,security,spec` when you need an explicit
+selection; explicit dimensions replace the derived plan. `--gate` is an
+additional request to fail on a critical review result, not a substitute for
+the deterministic gate.
+
+### Deterministic validation
+
+`vcsentinel gate --stage pre-commit|pre-push|pr [--profile X]` runs configured
+commands without an agent or a semantic verdict. In this project, the default
+`standard` profile checks these capabilities: `format` (`gofmt -l .`, failing
+when it prints files), `lint` (`go vet ./...`), `build` (`go build ./...`), and
+`unit_test` (`go test ./...`). `--profile` selects another named validation
+profile; `--stage` only records the lifecycle point (`pre-commit`, `pre-push`,
+or `pr`) and is independent of the profile.
+
+### Branch review and publication
+
+`vcsentinel pr review --base main` audits the branch's net diff against its
+base and saves the branch judgement and evidence locally. It also reports
+commits that still have no individual `vcsentinel review` record. That pending
+list is a distinction, not a hidden audit: `pr review` does not silently review
+those commits, and it does not run deterministic validation.
+
+The branch decision is **single PR** up to 400 changed lines. Above 400, it is
+**chained PRs** unless coherence is demonstrated. Add `--overview` to request
+the branch-level coherence check; a coherent oversized branch can remain a
+single PR, while an incoherent one should be split.
+
+`vcsentinel pr create --base main` consumes the saved judgement for the current
+branch and HEAD, verifies its committed evidence, and runs the deterministic
+validation profile again. It does not perform semantic review or author a
+semantic verdict; it publishes the saved result only after those checks pass
+(or after an explicit human `--force --reason "..."`).
 
 `pr create` uses GitHub Actions only when an explicit `ci.workflow` is
 configured. An absent or empty workflow disables CI evidence; vcSentinel never
