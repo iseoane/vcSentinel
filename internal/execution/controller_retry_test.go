@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vcSentinel/internal/store"
@@ -142,6 +143,11 @@ func TestRetryRejectsRunsOutsideRetryableTerminalEvidence(t *testing.T) {
 			adapter: func() Adapter { return &responseAdapter{} },
 			run: func(t *testing.T, controller *Controller) agentrun.Identity {
 				t.Helper()
+				t.Cleanup(func() {
+					if busy := controller.WaitForActiveRuns(2 * time.Second); busy != 0 {
+						t.Errorf("WaitForActiveRuns = %d, want 0 before test cleanup", busy)
+					}
+				})
 				handle, err := controller.Start(context.Background(), testRequest("awaiting"), testPolicy())
 				if err != nil {
 					t.Fatal(err)

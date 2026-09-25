@@ -87,9 +87,15 @@ func TestControllerPersistsPerAttemptObservationAndFinalizesMetrics(t *testing.T
 }
 func TestFinalizeMetricsRejectsAwaitingAndRetryableHeads(t *testing.T) {
 	t.Run("awaiting", func(t *testing.T) {
-		controller := NewControllerWithClock(store.NewStore(t.TempDir()), &scriptedAdapter{
+		storeRoot := t.TempDir()
+		controller := NewControllerWithClock(store.NewStore(storeRoot), &scriptedAdapter{
 			result: AdapterResult{AwaitingDecision: true},
 		}, fixedClock())
+		t.Cleanup(func() {
+			if busy := controller.WaitForActiveRuns(2 * time.Second); busy != 0 {
+				t.Errorf("WaitForActiveRuns = %d, want 0 before test cleanup", busy)
+			}
+		})
 		handle, err := controller.Start(context.Background(), testRequest("metrics-awaiting"), testPolicy())
 		if err != nil {
 			t.Fatal(err)
