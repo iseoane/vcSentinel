@@ -26,10 +26,6 @@ type AgentReviewer interface {
 	RunPrompt(prompt string) (string, error)
 }
 
-type restrictedToolReviewer interface {
-	RunReview(prompt, sha string, paths []string) (string, error)
-}
-
 type policyAwareReviewer interface {
 	ReviewWithPolicy(prompt, sha string, paths []string, policy reviewcontract.ToolPolicy) (string, error)
 }

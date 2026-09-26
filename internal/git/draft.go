@@ -40,17 +40,6 @@ func CaptureDraftChanges() ([]PlannedChange, error) {
 	return changes, nil
 }
 
-// HashDraftState returns a deterministic fingerprint of every pending change,
-// including the HEAD revision, index content, and worktree content. A new or
-// changed path anywhere in the draft therefore makes an old plan stale.
-func HashDraftState() (string, error) {
-	changes, err := CaptureDraftChanges()
-	if err != nil {
-		return "", err
-	}
-	return hashPlannedChangesState(changes), nil
-}
-
 func hashDraftStateForChanges(expected []PlannedChange) (string, error) {
 	current, err := CaptureDraftChanges()
 	if err != nil {

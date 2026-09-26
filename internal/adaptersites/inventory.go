@@ -266,8 +266,6 @@ func Sites() []Site {
 			Class: ClassInfra, Reason: "Read-only git plumbing for repository inventory snapshots (rev-parse/config/worktree list/status); never invokes a provider agent."},
 		{Path: "internal/ops/events.go", Symbol: "gh pr view probe", Anchor: "output, err := exec.Command(\"gh\", \"pr\", \"view\", strconv.Itoa(number), \"--json\", \"state\").Output()", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "GitHub CLI state probe for ops events."},
-		{Path: "internal/planning/context.go", Symbol: "planning context", Anchor: "output, err := exec.Command(\"git\", args...).Output()", Marker: "exec.Command",
-			Class: ClassInfra, Reason: "Git plumbing for planning context."},
 		{Path: "internal/process/process.go", Symbol: "process runner", Anchor: "cmd := exec.CommandContext(ctx, name, args...)", Marker: "exec.Command",
 			Class: ClassInfra, Reason: "Low-level context-aware process runner beneath the provider seam; owns tree accounting, not agents."},
 		{Path: "internal/setup/github.go", Symbol: "gh auth token", Anchor: "cmd := exec.Command(\"gh\", \"auth\", \"token\")", Marker: "exec.Command",

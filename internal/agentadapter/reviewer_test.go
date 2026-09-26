@@ -79,7 +79,7 @@ func TestReviewCommandOpenCodeRestrictsToolsAndSteps(t *testing.T) {
 	}
 	args, env, err := adapter.reviewCommand(ReviewRequest{
 		Prompt:       "audit",
-		Paths:        []string{"internal/review/engine.go", "internal/planning/context.go"},
+		Paths:        []string{"internal/review/engine.go", "internal/review/finding.go"},
 		SnapshotDir:  snapshot,
 		MaxToolCalls: 7,
 	})

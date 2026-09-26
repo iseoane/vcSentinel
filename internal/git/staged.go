@@ -33,13 +33,3 @@ func MeasureStagedVolume() (PendingVolume, error) {
 	volume.State = classifyState(volume.Blocking)
 	return volume, nil
 }
-
-// CheckStagedDiffLimits returns the blocking volume and state for the index
-// diff, preserving the short-form contract used by worktree measurements.
-func CheckStagedDiffLimits() (int, string, error) {
-	volume, err := MeasureStagedVolume()
-	if err != nil {
-		return 0, "ERROR", err
-	}
-	return volume.Blocking, volume.State, nil
-}

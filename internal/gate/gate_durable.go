@@ -353,22 +353,6 @@ func shortCommitLabel(sha string) string {
 	return sha[:7]
 }
 
-// settlementForState maps the existing facade vocabulary onto the root
-// run's terminal outcome so the failing LAYER stays distinct: validation and
-// review blockers share the failure class but carry different detail texts;
-// infrastructure failures (and any unknown state, which ExitCode also
-// treats as infrastructure) settle unavailable.
-func settlementForState(state string) rootSettlement {
-	switch state {
-	case StatePass:
-		return rootSettlement{class: agentrun.OutcomeSuccess}
-	case StateValidationFailed:
-		return rootSettlement{class: agentrun.OutcomeFailure, detail: layerValidationDetail}
-	default:
-		return rootSettlement{class: agentrun.OutcomeUnavailable, detail: layerInfrastructureDetail}
-	}
-}
-
 // expectedRootState is the lifecycle state each settlement class must
 // produce, used to prove the root settled honestly before the facade result
 // is returned.

@@ -107,13 +107,6 @@ func (a *AcpxAdapter) ReviewWithContextResult(ctx context.Context, prompt, sha s
 	return a.run(ctx, a.buildArgs(prompt, snapshot))
 }
 
-// outputOf reduces a full Result to its assistant output for the legacy
-// string-returning review contracts while preserving partial output on
-// provider outcome errors.
-func (a *AcpxAdapter) outputOf(res Result, err error) (string, error) {
-	return res.Output, err
-}
-
 // stderrExcerptLimit caps how much stderr text a failure detail may carry.
 const stderrExcerptLimit = 500
 

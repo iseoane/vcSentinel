@@ -959,16 +959,6 @@ func verdictFromSeverities(findings []ReviewFinding) string {
 	return worst
 }
 
-// extractJSONLBlock trims output to the segment between BEGIN_REVIEW and
-// END_REVIEW when present; otherwise it returns the complete output.
-func extractJSONLBlock(output string) string {
-	contract, err := reviewcontract.Lookup(DimLogic)
-	if err != nil {
-		panic(fmt.Sprintf("canonical review contract unavailable: %v", err))
-	}
-	return extractJSONLBlockWithSchema(output, contract.OutputSchema)
-}
-
 func extractJSONLBlockWithSchema(output string, schema reviewcontract.OutputSchema) string {
 	begin := strings.Index(output, schema.BeginDelimiter)
 	if begin < 0 {

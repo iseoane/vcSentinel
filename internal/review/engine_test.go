@@ -924,40 +924,6 @@ func hasBundle(bundles []ReviewBundle, name string) bool {
 	return false
 }
 
-func hasStrings(values []string, wanted ...string) bool {
-	for _, want := range wanted {
-		found := false
-		for _, value := range values {
-			if value == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
-func hasPrompt(prompts []string, purpose string) bool {
-	for _, prompt := range prompts {
-		if strings.Contains(prompt, purpose) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasResultBundle(results []DimensionOutcome, bundle string) bool {
-	for _, result := range results {
-		if result.Bundle == bundle {
-			return true
-		}
-	}
-	return false
-}
-
 // TestAuditCommitRetriesFormatFailuresButNotToolDenial replaces
 // TestAuditCommitDeterministicOutputErrorsAreNotRetried, which pinned that
 // NO deterministic output error was retried.

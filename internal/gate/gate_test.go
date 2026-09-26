@@ -1,75 +1,14 @@
 package gate
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ISeoane-Quental/vcSentinel/internal/config"
-	"github.com/ISeoane-Quental/vcSentinel/internal/review"
-	"github.com/ISeoane-Quental/vcSentinel/internal/reviewcontract"
 	"github.com/ISeoane-Quental/vcSentinel/internal/store"
 	"github.com/ISeoane-Quental/vcSentinel/internal/validation"
 )
-
-// fakeReviewer implements review.AgentReviewer returning a fixed output; a
-// minimal seam so the gate tests do not depend on any real agent.
-type fakeReviewer struct {
-	output string
-	err    error
-}
-
-func (a *fakeReviewer) RunPrompt(prompt string) (string, error) {
-	return completeTestContract(a.output), a.err
-}
-
-func (a *fakeReviewer) RunReview(prompt, _ string, _ []string) (string, error) {
-	return a.RunPrompt(prompt)
-}
-
-func (a *fakeReviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return a.RunReview(prompt, sha, paths)
-}
-
-func completeTestContract(output string) string {
-	var result map[string]any
-	if json.Unmarshal([]byte(output), &result) != nil {
-		return output
-	}
-	findings, ok := result["findings"].([]any)
-	if !ok {
-		return output
-	}
-	for _, item := range findings {
-		finding, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		if _, ok := finding["evidence"]; !ok {
-			finding["evidence"] = "test evidence"
-		}
-		if _, ok := finding["confidence"]; !ok {
-			finding["confidence"] = "high"
-		}
-	}
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		return output
-	}
-	return string(encoded)
-}
-
-// countingFactory builds a review.ReviewerFactory that counts how many times
-// it is invoked (one per dimension) and always returns the same fake
-// reviewer: it lets a test check "zero calls to the semantic review engine"
-// when validation fails (central rule of T1.7).
-func countingFactory(calls *int, output string, err error) review.ReviewerFactory {
-	return func(_ review.ReviewBundle, dimension string) (review.AgentReviewer, string, error) {
-		*calls++
-		return &fakeReviewer{output: output, err: err}, "profile-test", nil
-	}
-}
 
 func cfgWithProfile(nameCapability string, command string) config.Config {
 	cfg := config.Config{
@@ -189,22 +128,3 @@ var errAgentUnavailableTest = &fixedError{"agent unavailable"}
 type fixedError struct{ msg string }
 
 func (e *fixedError) Error() string { return e.msg }
-
-type sequentialReviewer struct {
-	answers []string
-	calls   *int
-}
-
-func (a *sequentialReviewer) RunPrompt(string) (string, error) {
-	output := a.answers[*a.calls]
-	*a.calls++
-	return completeTestContract(output), nil
-}
-
-func (a *sequentialReviewer) RunReview(prompt, sha string, paths []string) (string, error) {
-	return a.RunPrompt(prompt)
-}
-
-func (a *sequentialReviewer) ReviewWithPolicy(prompt, sha string, paths []string, _ reviewcontract.ToolPolicy) (string, error) {
-	return a.RunReview(prompt, sha, paths)
-}

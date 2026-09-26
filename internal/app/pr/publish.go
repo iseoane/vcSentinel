@@ -13,15 +13,6 @@ import (
 	"github.com/ISeoane-Quental/vcSentinel/internal/review"
 )
 
-// exitOnError centralizes the CLI exit pattern: prints the error and
-// leaves with code 1. Without an error it does nothing.
-func exitOnError(err error) {
-	if err != nil {
-		fmt.Printf("? %v\n", err)
-		os.Exit(1)
-	}
-}
-
 // WritePRTemplate saves the PR body to a temporary file and returns its
 // path. The temporary file avoids dirtying the worktree: the template is an
 // ephemeral publication artifact.

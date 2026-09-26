@@ -3,7 +3,6 @@ package git
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"strings"
 
 	"github.com/ISeoane-Quental/vcSentinel/internal/intent"
@@ -93,19 +92,6 @@ func (r *decisionRecorder) semanticCallback(unit SemanticOversizedUnit) (bool, e
 	return true, nil
 }
 
-func (r *decisionRecorder) callback(f ModifiedFile) (bool, error) {
-	r.pending = append(r.pending, PendingDecision{
-		ID:    DecisionID(f.Path),
-		File:  f.Path,
-		Lines: f.Lines,
-		Question: fmt.Sprintf(
-			"%s has %d lines and exceeds the suggested maximum of %d. Slice it as-is (bypass) or abort?",
-			f.Path, f.Lines, GiantCodeLimit),
-		Options: []string{AnswerBypass, AnswerAbort},
-	})
-	return true, nil
-}
-
 // BuildPlanForAgent computes the fragmentation plan and emits it without
 // creating any commit or reading stdin. It is safe to run as many times as
 // needed.
@@ -170,38 +156,6 @@ func finalizeBatchMessages(plan *FragmentationPlan, value intent.Intent) {
 			message = batch.AutoMessage
 		}
 		batch.Message = intent.Append(message, value)
-	}
-}
-
-func filesForPlan(changes []PlannedChange) []ModifiedFile {
-	files := make([]ModifiedFile, 0, len(changes))
-	for _, change := range changes {
-		files = append(files, ModifiedFile{
-			Path:  change.Path,
-			Lines: change.AddedLines,
-			Layer: ClassifyLayer(change.Path),
-		})
-	}
-	return files
-}
-
-func assignFileSelectors(plan *FragmentationPlan) {
-	for i := range plan.Batches {
-		batch := &plan.Batches[i]
-		if len(batch.Selectors) > 0 {
-			continue
-		}
-		for _, path := range batch.Paths {
-			selector := ChangeSelector{Path: path, Mode: SelectorWholeFile}
-			for _, change := range plan.Changes {
-				if change.Path == path {
-					selector.Path = change.Path
-					selector.OldPath = change.OldPath
-					break
-				}
-			}
-			batch.Selectors = append(batch.Selectors, selector)
-		}
 	}
 }
 

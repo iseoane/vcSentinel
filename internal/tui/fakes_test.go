@@ -83,12 +83,6 @@ func (h *fakeHost) Retry(ctx context.Context, request execution.RetryRequest) (e
 	return execution.Handle{RunID: request.RunID}, h.retryErr
 }
 
-func (h *fakeHost) appliedCount() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.applies)
-}
-
 func (h *fakeHost) appliedActions() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -143,12 +137,6 @@ func (p *scriptedProvider) resetCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.resets
-}
-
-func (p *scriptedProvider) callCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.calls
 }
 
 // Shared test harness for the model transition suites: builders and drivers

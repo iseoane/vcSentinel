@@ -302,14 +302,6 @@ func ResolveDispositionTarget(revision Revision, fingerprint string) (Finding, e
 	return resolveDispositionTarget(revision.FindingsWithDispositions(), fingerprint)
 }
 
-// ResolveDispositionTargetWithDispositions resolves a fingerprint after
-// applying the authoritative append-only human answers. It keeps target
-// identity and the effective lifecycle in one projection, so a second human
-// refutation cannot be appended after the first one already cleared it.
-func ResolveDispositionTargetWithDispositions(revision Revision, fingerprint string, dispositions []FindingDisposition) (Finding, error) {
-	return resolveDispositionTarget(ApplyDispositions(revision.FindingsWithDispositions(), dispositions), fingerprint)
-}
-
 func resolveDispositionTarget(findings []Finding, fingerprint string) (Finding, error) {
 	fp := strings.TrimSpace(fingerprint)
 	if fp == "" {

@@ -62,7 +62,7 @@ func escapeANSI(s string) string {
 			b.WriteString(s[i:])
 			break
 		}
-		seq := s[i+1 : i+end]
+		seq := s[i+2 : i+end]
 		i += end
 		if seq == "0" {
 			b.WriteString("</span>")

@@ -305,15 +305,6 @@ func pullRequestStateWithGH(number int) (string, error) {
 	return raw.State, nil
 }
 
-// Writes the lines (without terminators) to a temporary file and atomically
-// and safely replaces the log. It NEVER removes the original before the
-// replacement is written. On Windows, os.Rename over an existing destination
-// fails, so replacement is backup → rename → cleanup: on any failure, the
-// original log remains preserved (as .bak or intact).
-func writeTemporaryLog(path string, lines [][]byte) error {
-	return writeTemporaryLogWithTerminators(path, lines, os.Rename, true)
-}
-
 // writeRawTemporaryLog rewrites only after selecting lines, preserving the
 // retained bytes exactly, including CRLF and a missing final terminator.
 func writeRawTemporaryLog(path string, lines [][]byte) error {

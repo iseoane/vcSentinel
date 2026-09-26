@@ -311,30 +311,10 @@ func WorktreeClean() (bool, error) {
 	return strings.TrimSpace(out) == "", nil
 }
 
-func groupByLayers(files []ModifiedFile) map[string][]ModifiedFile {
-	byLayers := map[string][]ModifiedFile{"config": {}, "backend": {}, "frontend": {}, "test": {}}
-	for _, f := range files {
-		byLayers[f.Layer] = append(byLayers[f.Layer], f)
-	}
-	return byLayers
-}
-
 // classOrder pins the batches' output order by file class:
 // config → source → test → docs → generated. It is the axis that groups
 // before the layer, so that no batch mixes classes (T0.12).
 var classOrder = []string{ClassConfig, ClassSource, ClassTest, ClassDocs, ClassGenerated}
-
-// groupByClasses separates the files by FileClass, without touching the
-// layer: they are two distinct axes that BuildFragmentationPlan combines
-// in cascade.
-func groupByClasses(files []ModifiedFile) map[string][]ModifiedFile {
-	byClasses := make(map[string][]ModifiedFile, len(classOrder))
-	for _, f := range files {
-		class := FileClass(f.Path)
-		byClasses[class] = append(byClasses[class], f)
-	}
-	return byClasses
-}
 
 func giantBatch(f ModifiedFile, message string, number int) PlannedBatch {
 	return PlannedBatch{
