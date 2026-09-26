@@ -278,15 +278,6 @@ func resolveActor(worktree string) string {
 	return "unknown"
 }
 
-// verifyForTemplate runs the honest verification (guide §12.3) and translates
-// it to the template section: real exit codes per configured command, the
-// agent's tested contract or the motive for omission. A verification failure
-// is NEVER silent: it is reflected as a motive in the template so the PR is
-// transparent about what was checked.
-func verifyForTemplate(worktree, gitDir string, cfg config.Config) review.TemplateVerification {
-	return verifyForTemplateWith(worktree, gitDir, cfg, newModelVerifier(worktree), ops.Verify)
-}
-
 // verifyForTemplateWith delegates to internal/app/pr; the model-probe
 // constructor travels as a closure so the package-main var is read at call
 // time (tests swap it).

@@ -7,7 +7,6 @@ import (
 	"os"
 	"sync"
 
-	"github.com/ISeoane-Quental/vcSentinel/internal/agentrun"
 	"github.com/ISeoane-Quental/vcSentinel/internal/config"
 	"github.com/ISeoane-Quental/vcSentinel/internal/execution"
 	"github.com/ISeoane-Quental/vcSentinel/internal/gate"
@@ -105,61 +104,12 @@ func announcedReviewTransportWithMetrics(cfg config.Config, worktree, sha string
 	return rich, finalize
 }
 
-// reviewChildSink records the durable run identity of every review-side run
-// actually admitted during one gate execution (ticket 11 slice 3). Review
-// candidate identities are process-salted inside the shared durable
-// transport, so the gate orchestrator learns its real children here instead
-// of deriving them from the plan. Parallel dimensions admit runs from
-// different goroutines, so every access is mutex-guarded.
-type reviewChildSink struct {
-	mu  sync.Mutex
-	ids []string
-}
-
-// observe is the WithRunObserver callback: invoked synchronously after each
-// successful Start, before any completion can exist.
-func (s *reviewChildSink) observe(runID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ids = append(s.ids, runID)
-}
-
-// learned drains the sink as gate child identities in admission order.
-func (s *reviewChildSink) learned() []agentrun.Identity {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.ids) == 0 {
-		return nil
-	}
-	ids := make([]agentrun.Identity, 0, len(s.ids))
-	for _, id := range s.ids {
-		ids = append(ids, agentrun.Identity(id))
-	}
-	return ids
-}
-
 // reviewTransportFactory returns the per-commit factory wired into branch
 // analysis: every audited commit gets its own transport bound to its own SHA
 // and touched paths.
 func reviewTransportFactory(cfg config.Config, worktree string) func(sha string, paths []string) review.ReviewTransport {
 	return func(sha string, paths []string) review.ReviewTransport {
 		return durableReviewTransport(cfg, worktree, sha, paths)
-	}
-}
-
-// reviewTransportClosure wraps a durable transport into the engine-side
-// review.ReviewTransport closure both production wirings share (`vcsentinel
-// review` and the gate cutover): restricted-capability enforcement plus
-// verified-evidence identity threading. One construction site keeps the two
-// paths from drifting.
-// reviewTransportClosure wraps a durable transport into the historical
-// engine-side callback while preserving the same rich evidence seam used by
-// production finalization.
-func reviewTransportClosure(transport *reviewexec.DurableTransport) review.ReviewTransport {
-	rich := reviewTransportClosureWithEvidence(transport)
-	return func(bundleName, dimension, prompt string, agent review.AgentReviewer) (string, string, error) {
-		output, evidence, err := rich(bundleName, dimension, prompt, agent)
-		return output, evidence.InvocationID, err
 	}
 }
 

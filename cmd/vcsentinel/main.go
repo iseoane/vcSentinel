@@ -466,11 +466,9 @@ func runInit(path string) {
 // runUninit reverts in this repository exactly what 'init' did: it removes
 // the rules block from AGENTS.md/CLAUDE.md/.claudecode.md, removes the
 // repository-local agent skill, deletes the per-project config, and removes
-// the 'pre-commit' hook — but only if its
-// content matches byte for byte what generateHookScript would produce today;
-// if it differs (another tool replaced it, or it comes from elsewhere), it
-// leaves it intact and warns instead of deleting something vcSentinel did
-// not install.
+// the 'pre-commit' hook — but only when its recognized marker and executable
+// identify it as a vcSentinel hook; otherwise it leaves the hook intact and
+// warns instead of deleting something vcSentinel did not install.
 func runUninit(path string) {
 	root, err := git.GetWorktreeRoot()
 	if err != nil {
@@ -1320,11 +1318,6 @@ func vcsentinelExecutablePath() string {
 		return "vcsentinel"
 	}
 	return exe
-}
-
-// generateHookScript returns the marked direct hook used by new installations.
-func generateHookScript() string {
-	return generateHookScriptFor(vcsentinelExecutablePath())
 }
 
 func generateChainedHookScriptFor(metadata hookWrapperMetadata) string {

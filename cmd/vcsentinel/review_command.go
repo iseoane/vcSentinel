@@ -697,18 +697,6 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
-// questionFile returns the File of question id within questions, or
-// "" if it does not appear (id not asked in this pass, or asked without a
-// File).
-func questionFile(questions []review.AgentQuestion, id string) string {
-	for _, q := range questions {
-		if q.ID == id {
-			return q.File
-		}
-	}
-	return ""
-}
-
 // parseAuditAnswers separates --answer into "id=text" targeted
 // answers and the leftover free-text prose, so a targeted answer can be
 // deduplicated/persisted (T7.6) while every other shape of --answer keeps
