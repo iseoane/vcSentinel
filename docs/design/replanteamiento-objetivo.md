@@ -1365,8 +1365,10 @@ requires a rewrite.
 
 ### F5 — Planner, Scheduler, and bounded context
 
-- `internal/planning` (pure function, with `explain`) and `internal/agents`
-  (bundling, budget, attribution).
+- `internal/planning` remains a future target for this planner/scheduler bounded
+  context. It currently has no production integration and should not be kept as
+  an unreferenced prototype; return to this implementation with its production
+  consumer. `internal/agents` covers bundling, budget, and attribution.
 - Replace the static `dimensionesPorCapa` map with the plan.
 - Lift the tool prohibition; read-only toolset with bounded paths; layered
   context carrying the **final state of the files**.

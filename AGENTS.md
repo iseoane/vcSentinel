@@ -66,7 +66,7 @@ Code and scripts MUST behave the same on Windows and Debian:
 - `internal/ops` records, rotates, purges, and reads events from the repository common directory.
 - `internal/setup` installs, upgrades, and removes the binary and manages configuration templates.
 
-Durable runs/Control Center are layered on the same common directory: `internal/agentrun` + `internal/reviewcontract` are contracts, `internal/execution` is the controller over `internal/store` event stream with `internal/planning`, `internal/acpadapter`, `internal/reviewexec`, `internal/reviewsnapshot`, `internal/remediation`, `internal/process`; observation flows `internal/registry`+`internal/inventory`+`internal/presence`→`internal/overview`, `internal/attach`→`internal/tui`; `internal/daemon` owns the daemon, `internal/validation` the gate checks.
+Durable runs/Control Center are layered on the same common directory: `internal/agentrun` + `internal/reviewcontract` are contracts, `internal/execution` is the controller over `internal/store` event stream with `internal/acpadapter`, `internal/reviewexec`, `internal/reviewsnapshot`, `internal/process`; observation flows `internal/registry`+`internal/inventory`+`internal/presence`→`internal/overview`, `internal/attach`→`internal/tui`; `internal/daemon` owns the daemon, `internal/validation` the gate checks.
 
 Durable-run roadmap work (`vcsentinel runs`, R0-R11, A units, or D units) must load `.claude/skills/durable-runs-implementation/SKILL.md` before implementation or verification. Implementation work done through a delegated writer must load `.claude/skills/implementation-task/SKILL.md` first.
 
@@ -130,3 +130,11 @@ Commands that accept no flags reject extra arguments with exit code `1`.
 - `ci` configures the optional GitHub Actions evidence of `pr create`: `workflow` (empty or absent disables CI entirely), `wait_seconds` (default 900) and `poll_seconds` (default 15), both rejected unless they are positive integers.
 - `internal/git/thresholds.go` is the sole threshold source: `ReviewableLinesLimit` is 400 and governs the guardian, slicing, and `review.DecisionChainLimit`; `GiantCodeLimit` is 500.
 - `MY_SUB_AGENT` remains an optional override, not the primary configuration path.
+
+<!-- vcsentinel:begin -->
+## CRITICAL VOLUME RULE (THE GUARDIAN)
+- Before making changes or proposing a plan, run `vcsentinel check`. It measures the whole worktree and is advisory, including when the state is `CRITICAL`.
+- The repository's `pre-commit` hook runs `vcsentinel check --staged`. This is the enforcement boundary: it rejects staged authored code over the 400-line review budget.
+- When the worktree check is `CRITICAL`, run `vcsentinel slice plan --json` to produce reviewable selections without committing.
+- After the user answers every pending decision, apply the approved selections with `vcsentinel slice apply --plan plan.json --answers answers.json`. Never answer those decisions on the user's behalf.
+<!-- vcsentinel:end -->
