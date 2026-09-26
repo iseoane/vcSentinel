@@ -32,4 +32,4 @@ Remove the seven confirmed unused helpers identified by CodeGraph and Staticchec
 - Implemented: removed all seven confirmed dead declarations and one unused import across the four scoped Go files.
 - Parent readback: only the requested removals plus one stale comment in `main.go` corrected to describe the actual recognized-marker/executable check.
 - Verification: `go test ./cmd/vcsentinel`, `go vet ./cmd/vcsentinel`, Staticcheck U1000 for `./cmd/vcsentinel`, and `git diff --check` all passed after the final edit.
-- Delivery: user subsequently authorized committing and pushing the accumulated cleanup to `main`; commit and publication are pending.
+- Delivery: committed as `9782255` (`chore(review): remove confirmed dead helpers`) and pushed to `main`; branch cleanup completed.
