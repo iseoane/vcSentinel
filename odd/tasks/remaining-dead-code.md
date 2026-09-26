@@ -68,3 +68,8 @@ Reconfirm each outstanding Staticcheck/deadcode candidate against current source
 - Step 22: `tools/tuipreview` had no test files. Added table-driven tests for HTML escaping, xterm color cube, and grayscale conversion. They exposed `escapeANSI` slicing the CSI sequence from `i+1` (retaining `[`), so the color prefix was never recognized. Changed the slice start to `i+2`; focused tests passed.
 - Final verification: `go test ./tools/tuipreview`, `go test ./...`, `go vet ./...`, `git diff --check`, Staticcheck U1000, and `deadcode -test ./...` all passed.
 - Follow-up candidates not flagged by analyzers: `SerializePlan` is called only by `internal/git/semantic_test.go`; `BuildFragmentationPlan` is called only by `internal/git/plan_test.go`, while production calls `BuildFragmentationPlanWithReader`. Both are exported internal/test-facing seams; do not remove automatically without separate intent review.
+
+## Delivery Evidence
+- Slice commits: `2265eb58782c7671ac6f984134827e4718857f23` (repository config), `3878602f5ed1dfdd7068a22af530e8216eba37f6` (semantic cleanup and tests), `9d9b3c18e6633d883301d685f19855d74ab998df` (documentation and setup), and `6c61b124b4e73ae3abddbfd82407e56fe9ee0e88` (task record and TUI preview tests).
+- Published by fast-forward to `origin/main` at `6c61b124b4e73ae3abddbfd82407e56fe9ee0e88`; the local and remote feature branch were removed after verifying the commits are in `main`.
+- No semantic commit reviews were run, per the user's instruction.
