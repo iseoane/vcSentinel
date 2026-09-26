@@ -1,0 +1,56 @@
+version: "1.0"
+# Per-project vcSentinel configuration. Override here only what this repo
+# needs different from your global config (~/.vcsentinel/vcsentinel.yml,
+# created by 'vcsentinel install'). Anything you do not define is resolved from
+# there.
+#
+# Deterministic verification WITHOUT agent: if you define these lists, 'pr
+# review' runs the commands directly in the system shell and NEVER consults
+# the agent (the agent is only offered when nothing is configured).
+# Uncomment and adjust:
+# lint_commands:
+#   - "go vet ./..."
+# test_commands:
+#   - "go test ./..."
+# build_commands:
+#   - "go build ./..."
+#
+# Package-based validation: enable scope only on commands that truly support
+# it. go test accepts import paths; gofmt, go vet and go build remain complete.
+# validation:
+#   capabilities:
+#     unit_test:
+#       command: "go test ./..."
+#       supports_scope: true
+#       scoped_command: "go test {packages}"
+#   profiles:
+#     standard: [unit_test]
+#   mode: worktree
+#
+# Commit message language for 'vcsentinel slice'. Defaults to
+# "en". Without pinning it, the agent picked at random and mixed languages
+# within the same fragmentation.
+# commit_language: "en"
+#
+# Repository request: allows external semantic generation, but it is NOT
+# personal consent. The local unversioned grant is also required via
+# 'vcsentinel consent-diff grant'.
+request_external_agent_diff: false
+#
+# CodeGraph context for the reviewer: only metadata of affected test paths.
+# Also requires the local consent above.
+review:
+  codegraph_context: false
+#
+# Example (uncomment and adjust):
+# active_agent: "claude"
+# agents:
+#   claude:
+#     model: "claude-opus"
+#     reasoning_effort: "high"
+#     profiles:
+#       commit:
+#         reasoning_effort: "low"
+# (The 'commit' profile defines the model/effort that 'vcsentinel slice' uses to
+# generate commit messages; if you do not define it, the base model/effort of
+# the agent is used with no behavior change.)
