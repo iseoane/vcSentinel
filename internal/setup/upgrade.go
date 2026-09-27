@@ -2,6 +2,7 @@ package setup
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -210,11 +211,38 @@ func replaceWindowsBinary(tmpPath string, currentBinary string) (string, error) 
 }
 
 func replaceLinuxBinary(tmpPath string, currentBinary string) error {
-	if err := os.Rename(tmpPath, currentBinary); err != nil {
-		return fmt.Errorf("could not replace the current binary at %s: %w", currentBinary, err)
+	staged, err := os.CreateTemp(filepath.Dir(currentBinary), ".vcsentinel-upgrade-*")
+	if err != nil {
+		return fmt.Errorf("could not stage the new binary beside %s: %w", currentBinary, err)
 	}
-	if err := os.Chmod(currentBinary, 0755); err != nil {
-		return fmt.Errorf("could not grant execution permissions to the new binary: %w", err)
+	stagedPath := staged.Name()
+	defer os.Remove(stagedPath)
+
+	source, err := os.Open(tmpPath)
+	if err != nil {
+		_ = staged.Close()
+		return fmt.Errorf("could not read the new binary from %s: %w", tmpPath, err)
+	}
+	_, copyErr := io.Copy(staged, source)
+	sourceCloseErr := source.Close()
+	if copyErr != nil {
+		_ = staged.Close()
+		return fmt.Errorf("could not stage the new binary beside %s: %w", currentBinary, copyErr)
+	}
+	if sourceCloseErr != nil {
+		_ = staged.Close()
+		return fmt.Errorf("could not finish reading the new binary from %s: %w", tmpPath, sourceCloseErr)
+	}
+	if err := os.Chmod(stagedPath, 0755); err != nil {
+		_ = staged.Close()
+		return fmt.Errorf("could not grant execution permissions to the staged binary: %w", err)
+	}
+	if err := staged.Close(); err != nil {
+		return fmt.Errorf("could not finish staging the new binary beside %s: %w", currentBinary, err)
+	}
+
+	if err := os.Rename(stagedPath, currentBinary); err != nil {
+		return fmt.Errorf("could not replace the current binary at %s: %w", currentBinary, err)
 	}
 	return nil
 }

@@ -28,20 +28,21 @@ const (
 	upgradeE2EDestDirectory    = "/dev/shm"
 )
 
-// TestUpgradeFromGitHubAcrossFilesystems runs the upgrade in a copied test
-// process whose executable lives on /dev/shm while temporary downloads are
-// forced onto /tmp. The copied executable is disposable and never represents
-// the installed vcSentinel binary.
-func TestUpgradeFromGitHubAcrossFilesystems(t *testing.T) {
+// TestUpgradeFromGitHubStagesDownloadBesideExecutable runs the upgrade in a
+// copied test process whose executable lives on /dev/shm. It verifies that the
+// GitHub-download path stages beside the executable rather than using TMPDIR.
+// The copied executable is disposable and never represents the installed
+// vcSentinel binary.
+func TestUpgradeFromGitHubStagesDownloadBesideExecutable(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("cross-filesystem upgrade coverage requires Linux /tmp and /dev/shm mounts")
+		t.Skip("destination-filesystem upgrade coverage requires Linux /tmp and /dev/shm mounts")
 	}
 
 	if _, err := os.Stat(upgradeE2ESourceDirectory); err != nil {
-		t.Skipf("cross-filesystem upgrade coverage requires %s: %v", upgradeE2ESourceDirectory, err)
+		t.Skipf("destination-filesystem upgrade coverage requires %s: %v", upgradeE2ESourceDirectory, err)
 	}
 	if _, err := os.Stat(upgradeE2EDestDirectory); err != nil {
-		t.Skipf("cross-filesystem upgrade coverage requires %s: %v", upgradeE2EDestDirectory, err)
+		t.Skipf("destination-filesystem upgrade coverage requires %s: %v", upgradeE2EDestDirectory, err)
 	}
 
 	sourceDevice, sourceOK := filesystemDevice(upgradeE2ESourceDirectory)
@@ -89,7 +90,7 @@ func TestUpgradeFromGitHubAcrossFilesystems(t *testing.T) {
 		t.Skipf("cannot execute a test binary from %s; cross-filesystem coverage is unavailable: %v\n%s", upgradeE2EDestDirectory, err, output)
 	}
 
-	cmd := exec.Command(destination, "-test.run=^TestUpgradeFromGitHubAcrossFilesystemsHelper$", "-test.v")
+	cmd := exec.Command(destination, "-test.run=^TestUpgradeFromGitHubStagesDownloadBesideExecutableHelper$", "-test.v")
 	cmd.Env = append(os.Environ(),
 		upgradeE2EHelperEnv+"=1",
 		upgradeE2ETempDirEnv+"="+sourceDir,
@@ -123,15 +124,16 @@ func TestUpgradeFromGitHubAcrossFilesystems(t *testing.T) {
 	assertDirectoryContainsOnly(t, destinationDir, filepath.Base(destination))
 }
 
-// TestUpgradeFromGitHubAcrossFilesystemsHelper is executed by the copied test
-// binary from the destination filesystem. Running it in a child process makes
-// os.Executable point at the disposable copy instead of the real test binary.
-func TestUpgradeFromGitHubAcrossFilesystemsHelper(t *testing.T) {
+// TestUpgradeFromGitHubStagesDownloadBesideExecutableHelper is executed by
+// the copied test binary from the destination filesystem. Running it in a
+// child process makes os.Executable point at the disposable copy instead of
+// the real test binary.
+func TestUpgradeFromGitHubStagesDownloadBesideExecutableHelper(t *testing.T) {
 	if os.Getenv(upgradeE2EHelperEnv) != "1" {
-		t.Skip("helper test is only run by TestUpgradeFromGitHubAcrossFilesystems")
+		t.Skip("helper test is only run by TestUpgradeFromGitHubStagesDownloadBesideExecutable")
 	}
 	if runtime.GOOS != "linux" {
-		t.Skip("cross-filesystem upgrade coverage requires Linux")
+		t.Skip("destination-filesystem upgrade coverage requires Linux")
 	}
 
 	t.Setenv("TMPDIR", os.Getenv(upgradeE2ETempDirEnv))

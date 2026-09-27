@@ -1,10 +1,12 @@
 package setup
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -73,6 +75,95 @@ func TestReplaceLinuxBinary(t *testing.T) {
 		if perm := info.Mode().Perm(); perm != 0755 {
 			t.Errorf("expected permissions 0755, got %o", perm)
 		}
+	}
+}
+
+func TestReplaceLinuxBinaryCopyErrorLeavesCurrentBinaryIntact(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Linux replacement coverage is not exercised on Windows")
+	}
+
+	dir := t.TempDir()
+	currentBinary := filepath.Join(dir, "vcsentinel")
+	sourceDir := filepath.Join(dir, "source-dir")
+	if err := os.Mkdir(sourceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(currentBinary, []byte("version-old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := replaceLinuxBinary(sourceDir, currentBinary)
+	if err == nil {
+		t.Fatal("expected staging a directory to fail")
+	}
+
+	content, readErr := os.ReadFile(currentBinary)
+	if readErr != nil {
+		t.Fatalf("could not read the original binary after staging failed: %v", readErr)
+	}
+	if string(content) != "version-old" {
+		t.Fatalf("the original binary changed after staging failed: %q", content)
+	}
+}
+
+func TestReplaceLinuxBinaryAcrossFilesystems(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("cross-filesystem replacement coverage requires Linux")
+	}
+
+	sourceDir, err := os.MkdirTemp("/tmp", "vcsentinel-upgrade-source-*")
+	if err != nil {
+		t.Skipf("cannot create a source directory on /tmp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sourceDir) })
+
+	destinationDir, err := os.MkdirTemp("/dev/shm", "vcsentinel-upgrade-destination-*")
+	if err != nil {
+		t.Skipf("cannot create a destination directory on /dev/shm: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(destinationDir) })
+
+	sourceDevice, sourceOK := filesystemDevice(sourceDir)
+	destinationDevice, destinationOK := filesystemDevice(destinationDir)
+	if !sourceOK || !destinationOK {
+		t.Skip("the platform does not expose filesystem device identifiers needed to prove distinct mounts")
+	}
+	if sourceDevice == destinationDevice {
+		t.Skip("/tmp and /dev/shm are on the same filesystem; cross-device coverage is unavailable")
+	}
+
+	tmpPath := filepath.Join(sourceDir, "new")
+	currentBinary := filepath.Join(destinationDir, "vcsentinel")
+	if err := os.WriteFile(tmpPath, []byte("version-new"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(currentBinary, []byte("version-old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	err = replaceLinuxBinary(tmpPath, currentBinary)
+	if err != nil {
+		if errors.Is(err, syscall.EXDEV) {
+			t.Fatalf("replaceLinuxBinary returned EXDEV across filesystems: %v", err)
+		}
+		t.Fatalf("replaceLinuxBinary returned error: %v", err)
+	}
+
+	content, readErr := os.ReadFile(currentBinary)
+	if readErr != nil {
+		t.Fatalf("could not read the replaced binary: %v", readErr)
+	}
+	if string(content) != "version-new" {
+		t.Fatalf("the binary was not replaced across filesystems: %q", content)
+	}
+
+	info, statErr := os.Stat(currentBinary)
+	if statErr != nil {
+		t.Fatalf("could not stat the replaced binary: %v", statErr)
+	}
+	if perm := info.Mode().Perm(); perm != 0755 {
+		t.Errorf("expected permissions 0755, got %o", perm)
 	}
 }
 
