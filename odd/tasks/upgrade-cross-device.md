@@ -37,3 +37,4 @@ Fix Linux self-upgrade failures across filesystems and deliver the fix in patch 
 - Preflight after authorization: latest published release is `v1.1.0`; no local or remote `v1.1.1` tag exists.
 - User authorized committing/pushing the fix and publishing `v1.1.1`; `release.yml` is now `1.1.1`.
 - Final candidate verification after the version bump: `go test ./...` passed.
+- Release-preparation commits: `8e6339a0d2b521b539f241b8244837db9e82277f` (release.yml 1.1.1), `d134e9b0806892a7187e3905557dffec1b2cefd3` (upgrade fix and tests), `25de460b586471b3c0f08dd1248579dbb9753db1` (task evidence). No commit reviews were run, as requested.
