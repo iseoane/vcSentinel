@@ -24,3 +24,4 @@ Bump the repository's release version from `1.0.1` to the next minor, `1.1.0`, a
 - Preflight: repository was clean on `main` at `fecc00d`; latest GitHub release is `v1.0.1`; no local or remote `v1.1.0` tag/release exists.
 - Release script inspection: `infra/release.sh` runs `go vet ./...`, generates assets using `go run ./tools/release`, and publishes via `gh release create`.
 - Verification after the version bump: `go test ./...` passed.
+- Work unit 1 complete: `release.yml` is `1.1.0`; task-plan commit `af3644ca52a0d6b0da429a10e5f5a028aa231b70`, version commit `5bfa13dd1d3af605b869bc11ed1d75ea90339bf3`.
