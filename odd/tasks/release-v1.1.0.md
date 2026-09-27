@@ -28,3 +28,4 @@ Bump the repository's release version from `1.0.1` to the next minor, `1.1.0`, a
 - Work unit 2 complete: `sh infra/release.sh` passed `go vet ./...`, built all three configured assets, and published the GitHub release.
 - Published release: [vcSentinel v1.1.0](https://github.com/iseoane/vcSentinel/releases/tag/v1.1.0); tag `v1.1.0` points to `1f6437002fa6a70a8b28200e3f83778b18979587`. Assets: `vcsentinel-windows-amd64.exe`, `vcsentinel-linux-amd64`, `vcsentinel-linux-arm64`.
 - GitHub release verification confirmed all three assets; no semantic or native commit review was run.
+- Work unit 3 complete: the tag resolves to the published version commit, local and remote `main` were synchronized, the temporary release branches were removed, and the release evidence was recorded.
